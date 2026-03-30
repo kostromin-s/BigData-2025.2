@@ -1,0 +1,80 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+.eggs/
+.Python
+*.log
+*.sh
+# Virtual environment
+.env
+.venv
+env/
+venv/
+ENV/
+.ipynb_checkpoints/
+
+# ---- Jupyter Notebook ----
+.ipynb_checkpoints
+*.ipynb~
+
+# ---- VSCode ----
+.vscode/
+.history/
+
+# ---- OS generated files ----
+.DS_Store
+Thumbs.db
+
+# ---- Spark / Hadoop ----
+*.class
+*.jar
+*.war
+*.ear
+*.iml
+*.ipr
+*.iws
+target/
+.metastore/
+derby.log
+
+# ---- Logs ----
+logs/
+*.log
+*.out
+*.err
+
+# ---- Data files ----
+*.csv
+*.tsv
+*.parquet
+*.avro
+*.orc
+*.json
+*.txt
+*.db
+*.sqlite
+
+# ---- Compressed files ----
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# ---- IntelliJ / PyCharm ----
+.idea/
+
+# ---- Other ----
+*.bak
+*.swp
+*.swo
+# ---- Models (from phucle branch) ----
+data/models/vinallama-2.7b-chat_q5_0.gguf
+data/models/all-MiniLM-L6-v2-f16.gguf
+
+# ---- API (from phucle branch) ----
+API.json
