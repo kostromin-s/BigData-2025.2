@@ -1,33 +1,55 @@
-version: '3'
-
 services:
+  # HDFS NameNode
   namenode:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
-    ports:
-      - "9870:9870"
-      - "9000:9000"
+    platform: linux/amd64  # Emulate AMD64 on Apple Silicon
+    container_name: hdfs_namenode
+    hostname: namenode
     environment:
-      - CLUSTER_NAME=hdfs-cluster
+      - CLUSTER_NAME=legal-documents-cluster
       - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      - CORE_CONF_hadoop_http_staticuser_user=root
+      - HDFS_CONF_dfs_replication=1
+      - HDFS_CONF_dfs_webhdfs_enabled=true
+      - HDFS_CONF_dfs_permissions_enabled=false
+    ports:
+      - "9870:9870"   # NameNode Web UI
+      - "9000:9000"   # HDFS RPC
     volumes:
-      - namenode_data:/hadoop/dfs/name
+      - hdfs_namenode_data:/hadoop/dfs/name
     networks:
-      - hdfs
+      - hdfs_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9870"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
 
+  # HDFS DataNode
   datanode:
     image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    platform: linux/amd64  # Emulate AMD64 on Apple Silicon
+    container_name: hdfs_datanode
+    hostname: datanode
     environment:
       - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      - HDFS_CONF_dfs_replication=1
     volumes:
-      - datanode_data:/hadoop/dfs/data
+      - hdfs_datanode_data:/hadoop/dfs/data
     networks:
-      - hdfs
+      - hdfs_network
     depends_on:
-      - namenode
+      namenode:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
-  namenode_data:
-  datanode_data:
+  hdfs_namenode_data:
+  hdfs_datanode_data:
 
 networks:
-  hdfs:
+  hdfs_network:
+    driver: bridge
+    name: hdfs_hdfs_network
