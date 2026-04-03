@@ -9,30 +9,33 @@ try:
 except:
     from langchain_community.embeddings import HuggingFaceEmbeddings
 
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
+
+# Llama local qua Ollama
+from langchain_community.chat_models import ChatOllama
 
 
 # ================= CONFIG =================
 QDRANT_URL = "http://localhost:6333"
 COLLECTION = "real_estate"
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-GENAI_MODEL = "gemini-2.5-flash-lite"
+OLLAMA_MODEL = "qwen2.5-coder:7b"
 # ==========================================
 
 
-# Prompt chuẩn cho bất động sản
-QA_PROMPT = PromptTemplate.from_template(
-"""
+# Prompt tối ưu cho bất động sản
+QA_PROMPT = PromptTemplate.from_template("""
 Bạn là chuyên gia bất động sản.
 
-Chỉ được trả lời dựa trên dữ liệu cung cấp.
-Nếu không đủ dữ liệu, hãy nói rõ: "Không có dữ liệu phù hợp".
+QUY TẮC:
+- Chỉ dùng dữ liệu được cung cấp
+- Không suy diễn ngoài dữ liệu
+- Nếu không có → nói rõ "Không có dữ liệu phù hợp"
 
-Yêu cầu:
-- Trả lời rõ ràng
-- Nếu có giá, vị trí, pháp lý thì phải nêu
-- Không bịa thông tin
+YÊU CẦU:
+- Trả lời có cấu trúc rõ ràng
+- Trích dẫn thông tin quan trọng (giá, diện tích, vị trí)
+- Nếu có nhiều lựa chọn → so sánh và đề xuất cái tốt nhất
 
 Câu hỏi:
 {question}
@@ -42,41 +45,37 @@ Câu hỏi:
 ----------------
 
 Trả lời:
-"""
-)
+""")
 
 
-# Cache vector store (tránh load lại nhiều lần)
+# Cache vector store
 _VECTOR_STORE = None
 
 
 def get_llm():
     """
-    Khởi tạo LLM với cấu hình ổn định hơn.
+    Khởi tạo Llama local thông qua Ollama.
+
+    Yêu cầu:
+    - Ollama đang chạy (ollama serve)
+    - Model đã được pull (ollama pull llama3)
 
     Cải tiến:
-    - Giảm temperature để hạn chế bịa
-    - Giới hạn output
+    - Không cần API key
+    - Chạy hoàn toàn local
     """
-    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-
-    if not api_key:
-        raise RuntimeError("Thiếu API key")
-
-    return ChatGoogleGenerativeAI(
-        model=GENAI_MODEL,
-        temperature=0.1,
-        max_output_tokens=1024,
-        google_api_key=api_key,
+    llm = ChatOllama(
+        model=OLLAMA_MODEL,
+        temperature=0.1,     # giảm hallucination
     )
+    return llm
 
 
 def get_vector_store():
     """
-    Load vector store nhưng có cache để tăng performance.
+    Load vector store từ Qdrant.
 
-    Cải tiến:
-    - Không load lại mỗi lần query
+    Có cache để tránh load lại nhiều lần.
     """
     global _VECTOR_STORE
 
@@ -95,11 +94,13 @@ def get_vector_store():
 
 def build_context(docs) -> str:
     """
-    Xây dựng context có structure rõ ràng.
+    Xây dựng context có cấu trúc rõ ràng cho LLM.
 
-    Cải tiến:
-    - Có metadata: source, price, location
-    - Dễ đọc hơn cho LLM
+    Bao gồm metadata:
+    - source
+    - location
+    - price
+    - area
     """
     context_parts = []
 
@@ -126,65 +127,91 @@ Content:
     return "\n".join(context_parts)
 
 
+def retrieve_docs(question: str, k: int = 5):
+    """
+    Bước retrieve:
+    - Tìm top-k document liên quan
+
+    Tách riêng function để dễ mở rộng (rerank sau này)
+    """
+    store = get_vector_store()
+    docs = store.similarity_search(question, k=k)
+    return docs
+
+
 def rag_answer(question: str, k: int = 5) -> str:
     """
-    Pipeline RAG cải tiến:
+    Pipeline RAG hoàn chỉnh (local Llama):
 
-    1. Retrieve document
-    2. Build context có metadata
-    3. Prompt chuẩn hóa
-    4. Generate answer
+    1. Retrieve documents
+    2. Build context
+    3. Format prompt
+    4. Generate bằng Llama local
 
-    Cải tiến:
-    - Context rõ ràng hơn
-    - Prompt hạn chế hallucination
+    Ưu điểm:
+    - Không phụ thuộc API
+    - Chạy offline
     """
 
-    store = get_vector_store()
     llm = get_llm()
 
-    # Step 1: search
-    docs = store.similarity_search(question, k=k)
+    docs = retrieve_docs(question, k=k)
 
     if not docs:
         return "Không tìm thấy dữ liệu"
 
-    # Step 2: build context
     context = build_context(docs)
 
-    # Step 3: format prompt
     prompt = QA_PROMPT.format(
         question=question,
         context=context
     )
 
-    # Step 4: generate
     result = llm.invoke(prompt)
 
     return result.content
 
 
-def rag_answer_with_filter(question: str, location: str = None, k: int = 5) -> str:
+def rag_answer_with_filter(
+    question: str,
+    location: str = None,
+    max_price: float = None,
+    k: int = 5
+) -> str:
     """
-    Version nâng cao: có filter theo location.
+    Version nâng cao có filter theo metadata.
 
-    Ví dụ:
-    - chỉ tìm nhà ở Quận 9
-    - chỉ tìm dự án ở Hà Nội
+    Hỗ trợ:
+    - location
+    - price (cơ bản)
 
-    Tham số:
-    - location: lọc theo metadata location
+    Lưu ý:
+    - Qdrant filter cần metadata chuẩn từ lúc index
     """
 
     store = get_vector_store()
     llm = get_llm()
 
-    # Filter theo metadata (Qdrant hỗ trợ)
+    filter_conditions = []
+
     if location:
+        filter_conditions.append({
+            "key": "location",
+            "match": {"value": location}
+        })
+
+    # price filter (giả sử lưu dạng số)
+    if max_price:
+        filter_conditions.append({
+            "key": "price",
+            "range": {"lte": max_price}
+        })
+
+    if filter_conditions:
         docs = store.similarity_search(
             question,
             k=k,
-            filter={"must": [{"key": "location", "match": {"value": location}}]}
+            filter={"must": filter_conditions}
         )
     else:
         docs = store.similarity_search(question, k=k)
