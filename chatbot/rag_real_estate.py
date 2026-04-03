@@ -4,8 +4,13 @@ from typing import List
 from qdrant_client import QdrantClient
 from langchain_qdrant import QdrantVectorStore
 
-from langchain_community.embeddings import HuggingFaceEmbeddings
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings
+except:
+    from langchain_community.embeddings import HuggingFaceEmbeddings
+
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.prompts import PromptTemplate
 
 
 # ================= CONFIG =================
@@ -16,16 +21,42 @@ GENAI_MODEL = "gemini-2.5-flash-lite"
 # ==========================================
 
 
-# Hàm khởi tạo LLM (Gemini)
+# Prompt chuẩn cho bất động sản
+QA_PROMPT = PromptTemplate.from_template(
+"""
+Bạn là chuyên gia bất động sản.
+
+Chỉ được trả lời dựa trên dữ liệu cung cấp.
+Nếu không đủ dữ liệu, hãy nói rõ: "Không có dữ liệu phù hợp".
+
+Yêu cầu:
+- Trả lời rõ ràng
+- Nếu có giá, vị trí, pháp lý thì phải nêu
+- Không bịa thông tin
+
+Câu hỏi:
+{question}
+
+--- DỮ LIỆU ---
+{context}
+----------------
+
+Trả lời:
+"""
+)
+
+
+# Cache vector store (tránh load lại nhiều lần)
+_VECTOR_STORE = None
+
+
 def get_llm():
     """
-    Khởi tạo model LLM dùng để generate câu trả lời.
+    Khởi tạo LLM với cấu hình ổn định hơn.
 
-    Yêu cầu:
-    - Phải có API key trong biến môi trường GOOGLE_API_KEY hoặc GEMINI_API_KEY
-
-    Trả về:
-    - Instance của ChatGoogleGenerativeAI
+    Cải tiến:
+    - Giảm temperature để hạn chế bịa
+    - Giới hạn output
     """
     api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 
@@ -34,76 +65,140 @@ def get_llm():
 
     return ChatGoogleGenerativeAI(
         model=GENAI_MODEL,
-        temperature=0.2,
+        temperature=0.1,
+        max_output_tokens=1024,
         google_api_key=api_key,
     )
 
 
-# Hàm load vector store từ Qdrant
 def get_vector_store():
     """
-    Kết nối tới Qdrant và load collection chứa dữ liệu bất động sản.
+    Load vector store nhưng có cache để tăng performance.
 
-    Trả về:
-    - QdrantVectorStore dùng để search embedding
+    Cải tiến:
+    - Không load lại mỗi lần query
     """
-    emb = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
-    client = QdrantClient(url=QDRANT_URL)
+    global _VECTOR_STORE
 
-    store = QdrantVectorStore(
-        client=client,
-        collection_name=COLLECTION,
-        embedding=emb,
-    )
-    return store
+    if _VECTOR_STORE is None:
+        emb = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
+        client = QdrantClient(url=QDRANT_URL)
+
+        _VECTOR_STORE = QdrantVectorStore(
+            client=client,
+            collection_name=COLLECTION,
+            embedding=emb,
+        )
+
+    return _VECTOR_STORE
 
 
-# Hàm chính: hỏi đáp bằng RAG
+def build_context(docs) -> str:
+    """
+    Xây dựng context có structure rõ ràng.
+
+    Cải tiến:
+    - Có metadata: source, price, location
+    - Dễ đọc hơn cho LLM
+    """
+    context_parts = []
+
+    for i, d in enumerate(docs, start=1):
+        md = d.metadata
+
+        source = md.get("source", "unknown")
+        location = md.get("location", "")
+        price = md.get("price", "")
+        area = md.get("area", "")
+
+        block = f"""
+[Document {i}]
+Source: {source}
+Location: {location}
+Price: {price}
+Area: {area}
+
+Content:
+{d.page_content}
+"""
+        context_parts.append(block)
+
+    return "\n".join(context_parts)
+
+
 def rag_answer(question: str, k: int = 5) -> str:
     """
-    Pipeline RAG đơn giản:
+    Pipeline RAG cải tiến:
 
-    1. Nhận câu hỏi
-    2. Search top-k document tương tự
-    3. Ghép context
-    4. Gửi vào LLM để trả lời
+    1. Retrieve document
+    2. Build context có metadata
+    3. Prompt chuẩn hóa
+    4. Generate answer
 
-    Tham số:
-    - question: câu hỏi người dùng
-    - k: số lượng document lấy ra
-
-    Trả về:
-    - Chuỗi câu trả lời
+    Cải tiến:
+    - Context rõ ràng hơn
+    - Prompt hạn chế hallucination
     """
 
     store = get_vector_store()
     llm = get_llm()
 
-    # Bước 1: tìm document tương tự
+    # Step 1: search
     docs = store.similarity_search(question, k=k)
 
     if not docs:
         return "Không tìm thấy dữ liệu"
 
-    # Bước 2: ghép context
-    context = ""
-    for i, d in enumerate(docs, start=1):
-        context += f"[Doc {i}]\n{d.page_content}\n\n"
+    # Step 2: build context
+    context = build_context(docs)
 
-    # Bước 3: prompt đơn giản
-    prompt = f"""
-Bạn là trợ lý bất động sản.
+    # Step 3: format prompt
+    prompt = QA_PROMPT.format(
+        question=question,
+        context=context
+    )
 
-Câu hỏi:
-{question}
+    # Step 4: generate
+    result = llm.invoke(prompt)
 
-Dữ liệu:
-{context}
+    return result.content
 
-Trả lời:
-"""
 
-    # Bước 4: gọi LLM
+def rag_answer_with_filter(question: str, location: str = None, k: int = 5) -> str:
+    """
+    Version nâng cao: có filter theo location.
+
+    Ví dụ:
+    - chỉ tìm nhà ở Quận 9
+    - chỉ tìm dự án ở Hà Nội
+
+    Tham số:
+    - location: lọc theo metadata location
+    """
+
+    store = get_vector_store()
+    llm = get_llm()
+
+    # Filter theo metadata (Qdrant hỗ trợ)
+    if location:
+        docs = store.similarity_search(
+            question,
+            k=k,
+            filter={"must": [{"key": "location", "match": {"value": location}}]}
+        )
+    else:
+        docs = store.similarity_search(question, k=k)
+
+    if not docs:
+        return "Không tìm thấy dữ liệu phù hợp"
+
+    context = build_context(docs)
+
+    prompt = QA_PROMPT.format(
+        question=question,
+        context=context
+    )
+
     result = llm.invoke(prompt)
 
     return result.content
