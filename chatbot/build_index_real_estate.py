@@ -1,9 +1,14 @@
 import os
+import re
 from pathlib import Path
 
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
+
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings
+except:
+    from langchain_community.embeddings import HuggingFaceEmbeddings
 
 from qdrant_client import QdrantClient
 from langchain_qdrant import QdrantVectorStore
@@ -17,47 +22,91 @@ EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 # ==========================================
 
 
+def extract_metadata(text: str) -> dict:
+    """
+    Trích xuất metadata từ nội dung bất động sản.
+
+    Ví dụ:
+    - giá
+    - diện tích
+    - vị trí
+
+    Lưu ý:
+    - version đơn giản (regex)
+    """
+
+    price = None
+    area = None
+    location = None
+
+    # Giá (ví dụ: 2.5 tỷ, 3 tỷ)
+    m = re.search(r"(\d+(\.\d+)?)\s*tỷ", text.lower())
+    if m:
+        price = float(m.group(1)) * 1e9
+
+    # Diện tích (ví dụ: 70m2)
+    m = re.search(r"(\d+)\s*m2", text.lower())
+    if m:
+        area = int(m.group(1))
+
+    # Location đơn giản (ví dụ: quận 9)
+    m = re.search(r"quận\s*\d+", text.lower())
+    if m:
+        location = m.group(0)
+
+    return {
+        "price": price,
+        "area": area,
+        "location": location,
+    }
+
+
 def load_docs():
     """
-    Load toàn bộ file text/html trong thư mục data.
+    Load và parse document.
 
-    Version 1:
-    - Đọc file thô
-    - Không parse metadata
-    - Chỉ lấy content
+    Version 2:
+    - Có metadata
+    - Chuẩn bị dữ liệu tốt hơn cho RAG
     """
-    docs = []
 
+    docs = []
     root = Path(DATA_DIR)
 
     for file_path in root.rglob("*.*"):
         try:
             text = file_path.read_text(encoding="utf-8", errors="ignore")
 
+            meta = extract_metadata(text)
+
             doc = Document(
                 page_content=text,
                 metadata={
-                    "source": str(file_path.name)
+                    "source": file_path.name,
+                    "location": meta["location"],
+                    "price": meta["price"],
+                    "area": meta["area"],
                 }
             )
+
             docs.append(doc)
 
         except Exception as e:
-            print("Lỗi đọc file:", file_path, e)
+            print("Lỗi:", file_path, e)
 
     return docs
 
 
 def chunk_docs(raw_docs):
     """
-    Chia nhỏ document thành các chunk.
+    Chunk document nhưng giữ metadata.
 
-    Version 1:
-    - chunk đơn giản
-    - không quan tâm semantic
+    Cải tiến:
+    - mỗi chunk giữ nguyên metadata
     """
+
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=2000,
+        chunk_size=1500,
         chunk_overlap=200,
     )
 
@@ -67,10 +116,13 @@ def chunk_docs(raw_docs):
         parts = splitter.split_text(d.page_content)
 
         for i, part in enumerate(parts):
+            md = dict(d.metadata)
+            md["chunk_id"] = i
+
             chunks.append(
                 Document(
                     page_content=part,
-                    metadata=d.metadata
+                    metadata=md
                 )
             )
 
@@ -79,31 +131,35 @@ def chunk_docs(raw_docs):
 
 def build_index():
     """
-    Pipeline build index:
+    Pipeline build index hoàn chỉnh:
 
-    1. Load document
-    2. Chunk
-    3. Embedding
-    4. Push vào Qdrant
+    1. Load dữ liệu
+    2. Extract metadata
+    3. Chunk
+    4. Embedding
+    5. Lưu vào Qdrant
     """
 
     raw_docs = load_docs()
     chunks = chunk_docs(raw_docs)
 
-    print("Docs:", len(raw_docs))
+    print("Raw docs:", len(raw_docs))
     print("Chunks:", len(chunks))
+
+    if not chunks:
+        print("Không có dữ liệu")
+        return
 
     emb = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
 
     client = QdrantClient(url=QDRANT_URL)
 
-    # Xóa collection cũ nếu tồn tại
+    # Reset collection
     try:
         client.delete_collection(collection_name=COLLECTION)
     except:
         pass
 
-    # Insert dữ liệu
     QdrantVectorStore.from_documents(
         documents=chunks,
         embedding=emb,
@@ -111,7 +167,7 @@ def build_index():
         collection_name=COLLECTION,
     )
 
-    print("Index done")
+    print("Build index thành công")
 
 
 if __name__ == "__main__":
