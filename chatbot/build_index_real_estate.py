@@ -18,7 +18,7 @@ from langchain_qdrant import QdrantVectorStore
 DATA_DIR = "./data/real_estate"
 QDRANT_URL = "http://localhost:6333"
 COLLECTION = "real_estate"
-EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+EMBED_MODEL = "intfloat/multilingual-e5-base"
 # ==========================================
 
 
