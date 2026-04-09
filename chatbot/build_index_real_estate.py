@@ -113,7 +113,7 @@ def chunk_docs(raw_docs):
     chunks = []
 
     for d in raw_docs:
-        parts = splitter.split_text(d.page_content)
+        parts = splitter.split_documents([d])
 
         for i, part in enumerate(parts):
             md = dict(d.metadata)
