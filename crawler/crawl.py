@@ -1,6 +1,6 @@
 """
   - get_ad_ids(page) để gom list_id
-  -crawl_data(id)  để lấy raw JSON chi tiết
+  - crawl_detail(id)  để lấy raw JSON chi tiết
 Lưu 2 file:
   data/all_ids.json        — set các list_id đã biết
   data/all_raw_data.json   — { list_id: raw_ad_json }
