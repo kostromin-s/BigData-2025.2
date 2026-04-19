@@ -1,8 +1,6 @@
-"""Crawl ad IDs + detail từ chotot gateway (backend của nhatot.com).
-
-Tái hiện logic 2 bước trong CrawlData.ipynb:
-  1) get_ad_ids(page) để gom list_id
-  2) crawl_data(id)  để lấy raw JSON chi tiết
+"""
+  - get_ad_ids(page) để gom list_id
+  -crawl_data(id)  để lấy raw JSON chi tiết
 Lưu 2 file:
   data/all_ids.json        — set các list_id đã biết
   data/all_raw_data.json   — { list_id: raw_ad_json }
@@ -23,7 +21,7 @@ RAW_FILE = DATA_DIR / "all_raw_data.json"
 REGION_V2 = 12000   # Hà Nội
 CATEGORY = 1000     # Bất động sản
 PAGE_START = 0
-PAGE_END = 3        # 3 trang * 20 ads = ~60 IDs
+PAGE_END = 3        
 LIMIT = 20
 SLEEP_LIST = 1.5
 SLEEP_DETAIL = 0.8
