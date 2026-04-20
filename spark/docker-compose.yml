@@ -5,8 +5,10 @@ services:
     container_name: spark_consumer
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - KAFKA_TOPIC=real-estate-documents
+      - KAFKA_STARTING_OFFSET=earliest
       - HDFS_NAMENODE=hdfs://namenode:9000
-      - HDFS_OUTPUT_PATH=/data/legal-documents
+      - HDFS_OUTPUT_PATH=/data/real-estate
     ports:
       - "4040:4040"  # Spark Web UI
     volumes:
