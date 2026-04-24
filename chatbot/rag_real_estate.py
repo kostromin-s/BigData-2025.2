@@ -4,10 +4,7 @@ from typing import List
 from qdrant_client import QdrantClient
 from langchain_qdrant import QdrantVectorStore
 
-try:
-    from langchain_huggingface import HuggingFaceEmbeddings
-except:
-    from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 
 from langchain_core.prompts import PromptTemplate
 

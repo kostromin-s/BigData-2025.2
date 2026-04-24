@@ -151,6 +151,61 @@ code {
 </style>
 """, unsafe_allow_html=True)
 
+# ===================== SIDEBAR =====================
+with st.sidebar:
+    st.markdown('<div class="sidebar-logo">PropAI</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-tagline">Real Estate Intelligence</div>', unsafe_allow_html=True)
+    st.markdown('<hr class="sidebar-divider">', unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class="sidebar-card">
+        <span class="sidebar-card-icon">🏙️</span>
+        <span class="sidebar-card-label">Giá Thị Trường</span>
+        <div class="sidebar-card-desc">Cập nhật giá khu vực, phân khúc</div>
+    </div>
+    <div class="sidebar-card">
+        <span class="sidebar-card-icon">📊</span>
+        <span class="sidebar-card-label">Phân Tích Đầu Tư</span>
+        <div class="sidebar-card-desc">ROI, dòng tiền, sinh lời</div>
+    </div>
+    <div class="sidebar-card">
+        <span class="sidebar-card-icon">⚖️</span>
+        <span class="sidebar-card-label">Pháp Lý & Thủ Tục</span>
+        <div class="sidebar-card-desc">Sổ đỏ, hợp đồng, thuế phí</div>
+    </div>
+    <div class="sidebar-card">
+        <span class="sidebar-card-icon">🗺️</span>
+        <span class="sidebar-card-label">Chọn Khu Vực</span>
+        <div class="sidebar-card-desc">So sánh vị trí, tiềm năng</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<hr class="sidebar-divider">', unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class="sidebar-stats">
+        <div class="stat-item">
+            <div class="stat-num">10K+</div>
+            <div class="stat-label">Dữ liệu</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-num">63</div>
+            <div class="stat-label">Tỉnh/TP</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-num">24/7</div>
+            <div class="stat-label">Hỗ trợ</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<hr class="sidebar-divider">', unsafe_allow_html=True)
+    if st.button("🗑️  Xoá lịch sử chat", use_container_width=True):
+        st.session_state.messages = [
+            {"role": "assistant", "content": "Cuộc trò chuyện đã được làm mới ✨ Tôi có thể giúp gì cho bạn?"}
+        ]
+        st.rerun()
+    st.markdown('<p style="text-align:center;font-size:0.65rem;color:rgba(198,160,96,0.3);margin-top:1rem;">© 2025 PropAI · Powered by AI</p>', unsafe_allow_html=True)
 
 
 # ===================== MAIN AREA =====================
