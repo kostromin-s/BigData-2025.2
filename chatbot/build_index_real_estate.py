@@ -9,13 +9,14 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 
 from qdrant_client import QdrantClient
 from langchain_qdrant import QdrantVectorStore
+from common.config import settings
 
 
 # ================= CONFIG =================
-DATA_DIR = "./data/real_estate"
-QDRANT_URL = "http://localhost:6333"
-COLLECTION = "real_estate"
-EMBED_MODEL = "intfloat/multilingual-e5-base"
+DATA_DIR: str = "./data/real_estate"
+QDRANT_URL: str = settings.QDRANT_URL
+COLLECTION: str = "real_estate"
+EMBED_MODEL: str = settings.EMBED_MODEL
 # ==========================================
 
 
