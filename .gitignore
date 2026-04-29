@@ -79,3 +79,5 @@ data/models/all-MiniLM-L6-v2-f16.gguf
 # ---- API (from phucle branch) ----
 API.json
 chatbot/data
+
+common/config.py
