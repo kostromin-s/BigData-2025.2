@@ -72,11 +72,7 @@ logs/
 *.bak
 *.swp
 *.swo
-# ---- Models (from phucle branch) ----
-data/models/vinallama-2.7b-chat_q5_0.gguf
-data/models/all-MiniLM-L6-v2-f16.gguf
 
-# ---- API (from phucle branch) ----
 API.json
 chatbot/data
 
