@@ -37,7 +37,7 @@ Câu hỏi:
 {question}
 
 --- NGỮ CẢNH ---
-{context}
+{context} 
 ----------------
 
 Trả lời ngắn gọn, trích dẫn rõ điều khoản nếu có:

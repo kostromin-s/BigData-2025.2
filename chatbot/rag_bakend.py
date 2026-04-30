@@ -1,7 +1,8 @@
 import requests
+from common.config import settings
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "llama3.2:3b"
+OLLAMA_URL = settings.OLLAMA_URL
+MODEL = settings.MODEL
 
 
 def llm_answer(question: str) -> str:
