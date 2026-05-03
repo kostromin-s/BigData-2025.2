@@ -126,7 +126,6 @@ def chunk_docs(raw_docs):
 
     return chunks
 
-
 def build_index():
     """
     Pipeline build index hoàn chỉnh:
