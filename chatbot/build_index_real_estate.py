@@ -167,6 +167,5 @@ def build_index():
 
     print("Build index thành công")
 
-
 if __name__ == "__main__":
     build_index()
