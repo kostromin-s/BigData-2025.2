@@ -53,7 +53,6 @@ def create_producer():
     )
 
 def send_documents_to_kafka(producer):
-    total_files = 0
     success_count = 0
     
     
