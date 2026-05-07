@@ -5,7 +5,7 @@ services:
     container_name: pyspark_analytics
     environment:
       - HDFS_NAMENODE=hdfs://namenode:9000
-      - HDFS_INPUT_PATH=/data/legal-documents
+      - HDFS_INPUT_PATH=/data/real-estate
       - OUTPUT_DIR=/app/output
       - OUTPUT_FORMAT=png
     volumes:
@@ -31,7 +31,7 @@ services:
     container_name: pyspark_stats
     environment:
       - HDFS_NAMENODE=hdfs://namenode:9000
-      - HDFS_INPUT_PATH=/data/legal-documents
+      - HDFS_INPUT_PATH=/data/real-estate
     volumes:
       - ./analytics.py:/app/analytics.py
       - ./config.py:/app/config.py
@@ -54,7 +54,7 @@ services:
     container_name: pyspark_dashboard
     environment:
       - HDFS_NAMENODE=hdfs://namenode:9000
-      - HDFS_INPUT_PATH=/data/real-estate-documents
+      - HDFS_INPUT_PATH=/data/real-estate
       - PYSPARK_PYTHON=python3
       - PYSPARK_DRIVER_PYTHON=python3
     volumes:

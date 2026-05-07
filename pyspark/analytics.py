@@ -115,7 +115,7 @@ def analyze_content_size(df):
 def run_analytics(spark):
     """Chạy tất cả các phân tích"""
     print("\n" + "=" * 60)
-    print("PYSPARK ANALYTICS - LEGAL DOCUMENTS")
+    print("PYSPARK ANALYTICS - REAL ESTATE DOCUMENTS")
     print("=" * 60)
     print(f"HDFS NameNode: {config.HDFS_NAMENODE}")
     print(f"Input Path: {config.HDFS_INPUT_PATH}")

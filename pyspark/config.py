@@ -5,7 +5,7 @@ import os
 
 # HDFS Configuration
 HDFS_NAMENODE = os.getenv("HDFS_NAMENODE", "hdfs://namenode:9000")
-HDFS_INPUT_PATH = os.getenv("HDFS_INPUT_PATH", "/data/real-estate-documents")
+HDFS_INPUT_PATH = os.getenv("HDFS_INPUT_PATH", "/data/real-estate")
 
 # Spark Configuration
 SPARK_APP_NAME = "RealEstateDocumentsAnalytics"

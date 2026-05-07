@@ -12,7 +12,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-DATA_FOLDER = Path(__file__).parent.parent / "crawl" / "3"
+DATA_FOLDER = Path(__file__).parent.parent / "crawler" / "data"
 
 def on_send_success(record_metadata):
     """Callback khi gửi thành công"""
