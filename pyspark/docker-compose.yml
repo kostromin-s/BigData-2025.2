@@ -1,0 +1,73 @@
+services:
+  # PySpark Analytics Container
+  pyspark-analytics:
+    image: apache/spark-py:latest
+    container_name: pyspark_analytics
+    environment:
+      - HDFS_NAMENODE=hdfs://namenode:9000
+      - HDFS_INPUT_PATH=/data/legal-documents
+      - OUTPUT_DIR=/app/output
+      - OUTPUT_FORMAT=png
+    volumes:
+      - ./analytics.py:/app/analytics.py
+      - ./visualize.py:/app/visualize.py
+      - ./config.py:/app/config.py
+      - ./output:/app/output
+    user: root
+    working_dir: /app
+    command: >
+      bash -c "
+        python3 -m pip install -q matplotlib pandas seaborn numpy &&
+        /opt/spark/bin/spark-submit --master local[*] visualize.py
+      "
+    networks:
+      - hdfs_network
+    profiles:
+      - run  # Chỉ chạy khi cần
+
+  # Analytics Only (không tạo biểu đồ)
+  pyspark-stats:
+    image: apache/spark-py:latest
+    container_name: pyspark_stats
+    environment:
+      - HDFS_NAMENODE=hdfs://namenode:9000
+      - HDFS_INPUT_PATH=/data/legal-documents
+    volumes:
+      - ./analytics.py:/app/analytics.py
+      - ./config.py:/app/config.py
+    user: root
+    working_dir: /app
+    command: >
+      bash -c "
+        /opt/spark/bin/spark-submit --master local[*] analytics.py
+      "
+    networks:
+      - hdfs_network
+    profiles:
+      - stats  # Chỉ chạy khi cần xem thống kê
+
+  # Web Dashboard - Streamlit
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: pyspark_dashboard
+    environment:
+      - HDFS_NAMENODE=hdfs://namenode:9000
+      - HDFS_INPUT_PATH=/data/real-estate-documents
+      - PYSPARK_PYTHON=python3
+      - PYSPARK_DRIVER_PYTHON=python3
+    volumes:
+      - ./dashboard.py:/app/dashboard.py
+      - ./config.py:/app/config.py
+    ports:
+      - "8501:8501"
+    networks:
+      - hdfs_network
+    profiles:
+      - dashboard  # Chạy web dashboard
+
+networks:
+  hdfs_network:
+    external: true
+    name: hdfs_hdfs_network
