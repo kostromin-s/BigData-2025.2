@@ -1,7 +1,6 @@
 import streamlit as st
 from rag_bakend import llm_answer
 
-
 st.set_page_config(
     page_title="PropAI – Tư Vấn Bất Động Sản",
     page_icon="🏙️",
