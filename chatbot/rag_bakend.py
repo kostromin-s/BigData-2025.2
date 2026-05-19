@@ -26,3 +26,4 @@ def llm_answer(question: str) -> str:
 
     except Exception as e:
         return f"Lỗi gọi LLaMA local: {e}"
+    
