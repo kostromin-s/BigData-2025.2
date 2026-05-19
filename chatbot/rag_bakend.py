@@ -9,7 +9,6 @@ from common.config import settings
 OLLAMA_URL = settings.OLLAMA_URL
 MODEL = settings.MODEL
 
-
 def llm_answer(question: str) -> str:
     try:
         res = requests.post(
