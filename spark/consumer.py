@@ -6,6 +6,9 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json, count, avg, current_timestamp, round as sround
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType
 import config
+import os
+
+os.environ['HADOOP_HOME'] = r'C:\hadoop'  # Cần nếu chạy trên Windows và dùng winutils.exe
 
 # Schema bản ghi BĐS (phải trùng key với push_data_to_kafka.normalize_ad)
 listing_schema = StructType([
@@ -36,6 +39,8 @@ def create_spark_session():
         SparkSession.builder
         .appName(config.SPARK_APP_NAME)
         .master(config.SPARK_MASTER)
+        .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.13:4.1.2")
+        .config("spark.hadoop.dfs.client.use.datanode.hostname", "true")
         .config("spark.sql.adaptive.enabled", "true")
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
         .config("spark.sql.streaming.checkpointLocation", config.HDFS_CHECKPOINT_PATH)
