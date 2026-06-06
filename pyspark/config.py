@@ -1,21 +1,23 @@
 """
-Cấu hình cho PySpark Analytics
+Cấu hình cho tầng phân tích PySpark (analytics / visualize / dashboard).
 """
 import os
 
-# HDFS Configuration
+# HDFS
 HDFS_NAMENODE = os.getenv("HDFS_NAMENODE", "hdfs://namenode:9000")
 HDFS_INPUT_PATH = os.getenv("HDFS_INPUT_PATH", "/data/real-estate")
 
-# Spark Configuration
-SPARK_APP_NAME = "RealEstateDocumentsAnalytics"
+# Spark
+SPARK_APP_NAME = "RealEstateAnalytics"
 SPARK_MASTER = os.getenv("SPARK_MASTER", "local[*]")
 
-# Output Configuration
+# Output ảnh
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "/app/output")
-OUTPUT_FORMAT = os.getenv("OUTPUT_FORMAT", "png")  
+OUTPUT_FORMAT = os.getenv("OUTPUT_FORMAT", "png")
 
-# Chart Configuration
-CHART_DPI = 150
-CHART_FIGSIZE = (12, 8)
-CHART_STYLE = "seaborn-v0_8-darkgrid"
+# Biểu đồ
+CHART_FIGSIZE = (14, 8)
+CHART_DPI = 120
+
+# Số nhóm hiển thị tối đa (top-N quận/huyện)
+TOP_N = 15

@@ -1,152 +1,144 @@
 """
-PySpark Analytics - Đọc dữ liệu từ HDFS và thực hiện thống kê
+PySpark Analytics - Phân tích dữ liệu bất động sản từ HDFS (Parquet).
+Thay thế phần thống kê theo "văn bản" bằng các chỉ số đặc thù BĐS:
+  - phân bố theo loại hình / khu vực
+  - thống kê giá, diện tích
+  - giá trung bình & giá/m² theo quận
 """
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import (
-    col, count, sum as spark_sum, avg, 
-    min as spark_min, max as spark_max,
-    length, desc
-)
+from pyspark.sql.functions import col, count, avg, round as sround
 import config
-import os
 
 
 def create_spark_session():
-    """Tạo Spark Session với HDFS support"""
-    spark = SparkSession.builder \
-        .appName(config.SPARK_APP_NAME) \
-        .master(config.SPARK_MASTER) \
-        .config("spark.sql.adaptive.enabled", "true") \
-        .config("spark.hadoop.fs.defaultFS", config.HDFS_NAMENODE) \
+    spark = (
+        SparkSession.builder
+        .appName(config.SPARK_APP_NAME)
+        .master(config.SPARK_MASTER)
+        .config("spark.hadoop.fs.defaultFS", config.HDFS_NAMENODE)
+        .config("spark.sql.adaptive.enabled", "true")
         .getOrCreate()
-    
+    )
     spark.sparkContext.setLogLevel("WARN")
     return spark
 
 
 def load_data_from_hdfs(spark):
-    """Đọc dữ liệu Parquet từ HDFS"""
-    hdfs_path = f"{config.HDFS_NAMENODE}{config.HDFS_INPUT_PATH}"
-    print(f"\nĐang đọc dữ liệu từ: {hdfs_path}")
-    
+    """Đọc Parquet, thêm cột giá/m²; trả None nếu rỗng."""
     try:
-        df = spark.read.parquet(hdfs_path)
-        total = df.count()
-        print(f"Đã đọc {total:,} documents từ HDFS")
-        return df
+        df = spark.read.parquet(config.HDFS_INPUT_PATH)
     except Exception as e:
-        print(f"Lỗi khi đọc dữ liệu: {e}")
+        print(f"❌ Không đọc được dữ liệu từ {config.HDFS_INPUT_PATH}: {e}")
         return None
 
+    if df.rdd.isEmpty():
+        print("⚠️ Không có dữ liệu trong HDFS.")
+        return None
 
-def analyze_domain_distribution(df):
-    """Phân tích phân bố theo domain"""
-    print("\n" + "=" * 60)
-    print("THỐNG KÊ THEO DOMAIN")
-    print("=" * 60)
-    
-    domain_stats = df.groupBy("domain").agg(
-        count("*").alias("doc_count"),
-        spark_sum(length(col("content"))).alias("total_chars"),
-        avg(length(col("content"))).alias("avg_chars")
-    ).orderBy(desc("doc_count"))
-    
-    domain_data = domain_stats.collect()
-    
-    print(f"\n{'Domain':<35} {'Số doc':>10} {'Tổng chars':>15} {'TB chars':>12}")
-    print("-" * 75)
-    
-    for row in domain_data:
-        print(f"{row.domain:<35} {row.doc_count:>10,} {int(row.total_chars):>15,} {int(row.avg_chars):>12,}")
-    
-    return domain_data
+    # Giá trên mỗi m² (chỉ khi cả price và area hợp lệ)
+    df = df.withColumn(
+        "price_per_m2",
+        (col("price") / col("area_m2")).cast("double"),
+    )
+    return df
 
 
-def analyze_content_size(df):
-    """Phân tích kích thước content"""
-    print("\n" + "=" * 60)
-    print("THỐNG KÊ KÍCH THƯỚC CONTENT")
-    print("=" * 60)
-    
-    size_df = df.select(length(col("content")).alias("size"))
-    
-    stats = size_df.agg(
-        count("*").alias("total_docs"),
-        spark_min("size").alias("min_size"),
-        spark_max("size").alias("max_size"),
-        avg("size").alias("avg_size"),
-        spark_sum("size").alias("total_size")
-    ).collect()[0]
-    
-    print(f"\n  • Tổng số documents: {stats.total_docs:,}")
-    print(f"  • Kích thước nhỏ nhất: {stats.min_size:,} ký tự")
-    print(f"  • Kích thước lớn nhất: {stats.max_size:,} ký tự")
-    print(f"  • Kích thước trung bình: {int(stats.avg_size):,} ký tự")
-    print(f"  • Tổng kích thước: {stats.total_size:,} ký tự")
-    
-    # Phân bố kích thước theo khoảng
-    print("\nPhân bố theo khoảng kích thước:")
-    print("-" * 50)
-    
-    size_ranges = [
-        (0, 1000, "0 - 1K"),
-        (1000, 5000, "1K - 5K"),
-        (5000, 10000, "5K - 10K"),
-        (10000, 50000, "10K - 50K"),
-        (50000, 100000, "50K - 100K"),
-        (100000, float('inf'), "> 100K")
-    ]
-    
-    size_distribution = []
-    for min_s, max_s, label in size_ranges:
-        if max_s == float('inf'):
-            cnt = size_df.filter(col("size") >= min_s).count()
+def analyze_listing_type(df):
+    print("\n--- Theo hình thức (Bán / Cho thuê) ---")
+    stats = (df.groupBy("listing_type").agg(count("*").alias("n"))
+             .orderBy(col("n").desc()))
+    for r in stats.collect():
+        print(f"  • {str(r['listing_type'])[:15]:15s}: {r['n']:6d}")
+    return stats
+
+
+def analyze_property_type(df):
+    print("\n--- Phân bố theo loại hình ---")
+    stats = (df.groupBy("property_type").agg(count("*").alias("n"))
+             .orderBy(col("n").desc()))
+    for r in stats.collect():
+        print(f"  • {str(r['property_type'])[:35]:35s}: {r['n']:6d}")
+    return stats
+
+
+def analyze_district(df):
+    print("\n--- Top khu vực (tin BÁN, theo số tin) ---")
+    stats = (df.filter((col("listing_type") == "Bán") &
+                       col("district").isNotNull() & (col("district") != ""))
+             .groupBy("district")
+             .agg(count("*").alias("n"),
+                  sround(avg("price") / 1e9, 2).alias("avg_price_ty"),
+                  sround(avg("area_m2"), 1).alias("avg_area_m2"))
+             .orderBy(col("n").desc())
+             .limit(config.TOP_N))
+    for r in stats.collect():
+        print(f"  • {str(r['district'])[:25]:25s}: {r['n']:5d} tin | "
+              f"giá TB {r['avg_price_ty']} tỷ | DT TB {r['avg_area_m2']} m²")
+    return stats
+
+
+def analyze_price(df):
+    print("\n--- Thống kê giá BÁN (tỷ VND) ---")
+    priced = df.filter((col("listing_type") == "Bán") &
+                       col("price").isNotNull() & (col("price") > 0))
+    n = priced.count()
+    if n == 0:
+        print("  (không có dữ liệu giá)")
+        return None
+    s = priced.selectExpr("min(price) mn", "max(price) mx", "avg(price) av").collect()[0]
+    q = priced.approxQuantile("price", [0.25, 0.5, 0.75], 0.05)
+    print(f"  • Số tin có giá : {n}")
+    print(f"  • Thấp nhất     : {s['mn']/1e9:.2f}")
+    print(f"  • Cao nhất      : {s['mx']/1e9:.2f}")
+    print(f"  • Trung bình    : {s['av']/1e9:.2f}")
+    if len(q) == 3:
+        print(f"  • Q1/Trung vị/Q3: {q[0]/1e9:.2f} / {q[1]/1e9:.2f} / {q[2]/1e9:.2f}")
+    return s
+
+
+def analyze_area(df):
+    print("\n--- Phân bố diện tích (m²) ---")
+    ranges = [(0, 30, "< 30"), (30, 50, "30-50"), (50, 70, "50-70"),
+              (70, 100, "70-100"), (100, 150, "100-150"), (150, float("inf"), "> 150")]
+    sized = df.filter(col("area_m2").isNotNull() & (col("area_m2") > 0))
+    out = []
+    for lo, hi, label in ranges:
+        if hi == float("inf"):
+            c = sized.filter(col("area_m2") >= lo).count()
         else:
-            cnt = size_df.filter((col("size") >= min_s) & (col("size") < max_s)).count()
-        size_distribution.append((label, cnt))
-        print(f"  • {label:<15}: {cnt:>8,} documents")
-    
-    return {
-        "stats": stats,
-        "distribution": size_distribution
-    }
+            c = sized.filter((col("area_m2") >= lo) & (col("area_m2") < hi)).count()
+        out.append((label, c))
+        print(f"  • {label:>8} m²: {c:6d}")
+    return out
 
 
 def run_analytics(spark):
-    """Chạy tất cả các phân tích"""
     print("\n" + "=" * 60)
-    print("PYSPARK ANALYTICS - REAL ESTATE DOCUMENTS")
+    print("PYSPARK ANALYTICS - REAL ESTATE")
     print("=" * 60)
-    print(f"HDFS NameNode: {config.HDFS_NAMENODE}")
-    print(f"Input Path: {config.HDFS_INPUT_PATH}")
-    
-    # Load data
     df = load_data_from_hdfs(spark)
     if df is None:
         return None
-    
-    # Run analytics
+    df.cache()
+    print(f"Tổng số tin: {df.count()}")
     results = {
-        "domain_stats": analyze_domain_distribution(df),
-        "size_stats": analyze_content_size(df)
+        "listing_type": analyze_listing_type(df),
+        "property_type": analyze_property_type(df),
+        "district": analyze_district(df),
+        "price": analyze_price(df),
+        "area": analyze_area(df),
     }
-    
-    print("\n" + "=" * 60)
-    print("HOÀN THÀNH PHÂN TÍCH")
-    print("=" * 60)
-    
+    print("\n" + "=" * 60 + "\nHOÀN THÀNH PHÂN TÍCH\n" + "=" * 60)
     return results, df
 
 
 def main():
     spark = create_spark_session()
-    
     try:
-        results = run_analytics(spark)
-        if results:
-            print("\n Sử dụng visualize.py để tạo biểu đồ từ kết quả này")
+        run_analytics(spark)
+        print("\nDùng visualize.py để xuất biểu đồ.")
     except Exception as e:
-        print(f"\n Lỗi: {e}")
+        print(f"❌ Lỗi: {e}")
         import traceback
         traceback.print_exc()
     finally:
