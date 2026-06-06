@@ -146,7 +146,7 @@ def build_index():
     if not chunks:
         print("Không có dữ liệu")
         return
-
+    
     emb = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
 
     client = QdrantClient(url=QDRANT_URL)
