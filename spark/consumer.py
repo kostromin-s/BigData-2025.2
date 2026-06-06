@@ -1,232 +1,156 @@
 """
-Đẩy dữ liệu bất động sản lên Kafka.
-
-Nguồn dữ liệu: crawler/data/all_raw_data.json  (dạng { list_id: raw_ad_json } lấy từ API Chợ Tốt)
-Mỗi tin rao được CHUẨN HOÁ về một schema có cấu trúc rồi gửi lên Kafka topic real-estate-documents.
-
-Lưu ý:
-- Tên trường của API Chợ Tốt có thể thay đổi theo từng nhóm tin. Hàm normalize_ad() lấy
-  dữ liệu phòng thủ bằng .get() và quét cả ad_params/parameters. Chạy thử:
-      python push_data_to_kafka.py --inspect
-  để in ra các key của bản ghi đầu tiên và đối chiếu, nếu cần thì chỉnh map bên dưới.
+Spark Structured Streaming: đọc tin BĐS từ Kafka -> thống kê -> ghi HDFS (Parquet).
+Schema khớp với bản ghi do kafka/push_data_to_kafka.py gửi lên.
 """
-import sys
-import json
-import logging
-from datetime import datetime, timezone
-from pathlib import Path
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, from_json, count, avg, current_timestamp, round as sround
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType
+import config
 
-from kafka import KafkaProducer
-import kafka_config
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
-
-# File JSON thô do crawler sinh ra
-RAW_FILE = Path(__file__).parent.parent / "crawler" / "data" / "all_raw_data.json"
-
-
-# ----------------------------------------------------------------------------- #
-# Helpers ép kiểu an toàn
-# ----------------------------------------------------------------------------- #
-def to_float(value):
-    """Ép về float, chỉ giữ chữ số ASCII và dấu thập phân. Trả None nếu không parse được."""
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    digits = "".join(ch for ch in str(value) if ch in "0123456789.,")
-    digits = digits.replace(",", "")
-    try:
-        return float(digits) if digits.strip(".") else None
-    except ValueError:
-        return None
+# Schema bản ghi BĐS (phải trùng key với push_data_to_kafka.normalize_ad)
+listing_schema = StructType([
+    StructField("list_id",       StringType(),  True),
+    StructField("title",         StringType(),  True),
+    StructField("description",   StringType(),  True),
+    StructField("listing_type",  StringType(),  True),
+    StructField("property_type", StringType(),  True),
+    StructField("price",         DoubleType(),  True),
+    StructField("price_text",    StringType(),  True),
+    StructField("area_m2",       DoubleType(),  True),
+    StructField("rooms",         IntegerType(), True),
+    StructField("toilets",       IntegerType(), True),
+    StructField("region",        StringType(),  True),
+    StructField("district",      StringType(),  True),
+    StructField("ward",          StringType(),  True),
+    StructField("street",        StringType(),  True),
+    StructField("latitude",      DoubleType(),  True),
+    StructField("longitude",     DoubleType(),  True),
+    StructField("posted_at",     StringType(),  True),
+    StructField("url",           StringType(),  True),
+    StructField("full_text",     StringType(),  True),
+])
 
 
-def to_int(value):
-    f = to_float(value)
-    return int(f) if f is not None else None
-
-
-def build_param_lookup(raw: dict) -> dict:
-    """
-    Gộp tất cả thuộc tính có cấu trúc về 1 dict {key: value}.
-    Chợ Tốt lưu thuộc tính (rooms, toilets, legal...) ở nhiều chỗ:
-      - ad["params"]: [ {"id": "rooms", "value": "2"}, ... ]   <-- hay dùng nhất
-      - ad_params   : { "size": {"value": 50, ...}, ... }
-      - parameters  : [ {"id": "size", "value": "50 m²"}, ... ]
-    """
-    lookup = {}
-    ad = raw.get("ad", raw)
-    sources = [ad.get("params") if isinstance(ad, dict) else None,
-               raw.get("ad_params"),
-               raw.get("parameters")]
-
-    for src in sources:
-        if isinstance(src, dict):
-            for key, obj in src.items():
-                val = obj.get("value") if isinstance(obj, dict) else obj
-                if val not in (None, "", []):
-                    lookup.setdefault(key, val)
-        elif isinstance(src, list):
-            for p in src:
-                if isinstance(p, dict) and "id" in p:
-                    val = p.get("value")
-                    if val not in (None, "", []):
-                        lookup.setdefault(p["id"], val)
-
-    return lookup
-
-
-# ----------------------------------------------------------------------------- #
-# Chuẩn hoá 1 tin rao -> schema thống nhất
-# ----------------------------------------------------------------------------- #
-def normalize_ad(list_id, raw: dict) -> dict:
-    """Map raw JSON Chợ Tốt -> bản ghi BĐS có cấu trúc."""
-    ad = raw.get("ad", raw)          # field chính nằm trong "ad"; fallback dùng raw
-    params = build_param_lookup(raw)
-
-    def pick(*keys):
-        """Lấy giá trị đầu tiên không rỗng từ ad rồi tới params."""
-        for k in keys:
-            v = ad.get(k)
-            if v not in (None, "", []):
-                return v
-        for k in keys:
-            v = params.get(k)
-            if v not in (None, "", []):
-                return v
-        return None
-
-    title = (pick("subject") or "").strip()
-    description = pick("body") or ""
-
-    # Bán hay cho thuê? Tin thuê luôn có "/tháng" trong chuỗi giá -> heuristic đáng tin
-    price_text = pick("price_string") or ""
-    listing_type = "Cho thuê" if "tháng" in price_text.lower() else "Bán"
-
-    # Thời điểm đăng (list_time thường là epoch mil‑giây)
-    posted_at = ""
-    lt = pick("list_time")
-    if lt is not None:
-        ts = to_float(lt)
-        if ts is not None:
-            if ts > 1e12:        # milisecond -> second
-                ts = ts / 1000.0
-            try:
-                posted_at = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
-            except (OverflowError, OSError, ValueError):
-                posted_at = str(lt)
-
-    record = {
-        "list_id":       str(list_id),
-        "title":         title,
-        "description":   description,
-        "listing_type":  listing_type,
-        "property_type": pick("category_name") or "Khác",
-        "price":         to_float(pick("price")),
-        "price_text":    price_text,
-        "area_m2":       to_float(pick("size", "area", "living_size")),
-        "rooms":         to_int(pick("rooms")),
-        "toilets":       to_int(pick("toilets")),
-        "region":        pick("region_name") or "",
-        "district":      pick("area_name") or "",
-        "ward":          pick("ward_name") or "",
-        "street":        (pick("street_name", "street_number") or "").strip(),
-        "latitude":      to_float(pick("latitude")),
-        "longitude":     to_float(pick("longitude")),
-        "posted_at":     posted_at,
-        "url":           f"https://www.chotot.com/{list_id}.htm",
-    }
-    # Văn bản dùng cho RAG/chatbot sau này
-    record["full_text"] = (title + "\n" + description).strip()
-    return record
-
-
-# ----------------------------------------------------------------------------- #
-# Kafka
-# ----------------------------------------------------------------------------- #
-def create_producer() -> KafkaProducer:
-    return KafkaProducer(
-        bootstrap_servers=kafka_config.KAFKA_BOOTSTRAP_SERVERS,
-        client_id=kafka_config.KAFKA_CLIENT_ID,
-        value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode("utf-8"),
-        key_serializer=lambda k: k.encode("utf-8") if k else None,
-        acks="all",
-        retries=5,
-        linger_ms=10,
-        batch_size=16384,
-        compression_type="gzip",
-        max_in_flight_requests_per_connection=5,
+def create_spark_session():
+    spark = (
+        SparkSession.builder
+        .appName(config.SPARK_APP_NAME)
+        .master(config.SPARK_MASTER)
+        .config("spark.sql.adaptive.enabled", "true")
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
+        .config("spark.sql.streaming.checkpointLocation", config.HDFS_CHECKPOINT_PATH)
+        .config("spark.hadoop.fs.defaultFS", config.HDFS_NAMENODE)
+        .getOrCreate()
     )
+    spark.sparkContext.setLogLevel("WARN")
+    return spark
 
 
-def load_raw() -> dict:
-    if not RAW_FILE.exists():
-        logger.error("Không tìm thấy %s. Hãy chạy crawler trước (python crawler/crawl.py).", RAW_FILE)
-        return {}
-    return json.loads(RAW_FILE.read_text(encoding="utf-8"))
-
-
-def send_all(producer: KafkaProducer, raw_map: dict) -> int:
-    success = 0
-    total = len(raw_map)
-    for list_id, raw in raw_map.items():
-        try:
-            record = normalize_ad(list_id, raw)
-        except Exception as e:  # bản ghi lỗi thì bỏ qua, không dừng cả job
-            logger.warning("Bỏ qua %s do lỗi normalize: %s", list_id, e)
-            continue
-
-        producer.send(
-            kafka_config.KAFKA_TOPIC,
-            key=record["property_type"],   # key = loại hình -> phân phối đều theo nhóm
-            value=record,
-        )
-        success += 1
-        if success % 100 == 0:
-            logger.info("Đã đưa %d/%d tin vào hàng đợi...", success, total)
-
-    producer.flush()
-    return success
-
-
-def inspect(raw_map: dict) -> None:
-    """In key của bản ghi đầu tiên + 1 bản ghi đã chuẩn hoá để kiểm tra map."""
-    if not raw_map:
-        return
-    first_id, first_raw = next(iter(raw_map.items()))
-    ad = first_raw.get("ad", first_raw)
-    print("== Các key trong 'ad' ==")
-    print(sorted(ad.keys()) if isinstance(ad, dict) else type(ad))
-    print("\n== Bản ghi sau khi chuẩn hoá ==")
-    print(json.dumps(normalize_ad(first_id, first_raw), ensure_ascii=False, indent=2))
-
-
-def main() -> None:
-    raw_map = load_raw()
-    if not raw_map:
-        return
-
-    if "--inspect" in sys.argv:
-        inspect(raw_map)
-        return
-
-    logger.info("Topic: %s | Bootstrap: %s", kafka_config.KAFKA_TOPIC, kafka_config.KAFKA_BOOTSTRAP_SERVERS)
-    logger.info("Tổng số tin trong file thô: %d", len(raw_map))
-
-    producer = None
+def process_and_save_batch(batch_df, batch_id):
+    """Thống kê đặc thù BĐS rồi ghi Parquet vào HDFS."""
     try:
-        producer = create_producer()
-        logger.info("Kết nối Kafka thành công!")
-        sent = send_all(producer, raw_map)
-        logger.info("Hoàn thành! Đã gửi %d tin lên Kafka.", sent)
+        total = batch_df.count()
+        if total == 0:
+            print(f"\nBatch {batch_id}: không có dữ liệu mới")
+            return
+
+        print(f"\n{'='*60}\nBATCH {batch_id} - THỐNG KÊ BẤT ĐỘNG SẢN\n{'='*60}")
+        print(f"Tổng số tin: {total}")
+
+        # Bán / Cho thuê
+        print("\nTheo hình thức:")
+        for r in (batch_df.groupBy("listing_type").agg(count("*").alias("n"))
+                  .orderBy(col("n").desc()).collect()):
+            print(f"  • {str(r['listing_type'])[:15]:15s}: {r['n']:5d}")
+
+        # Phân bố theo loại hình
+        print("\nTheo loại hình:")
+        for r in (batch_df.groupBy("property_type").agg(count("*").alias("n"))
+                  .orderBy(col("n").desc()).collect()):
+            print(f"  • {str(r['property_type'])[:30]:30s}: {r['n']:5d}")
+
+        # Top quận/huyện
+        print("\nTop khu vực:")
+        for r in (batch_df.filter(col("district") != "")
+                  .groupBy("district").agg(count("*").alias("n"))
+                  .orderBy(col("n").desc()).limit(10).collect()):
+            print(f"  • {str(r['district'])[:30]:30s}: {r['n']:5d}")
+
+        # Thống kê giá (VND) — CHỈ tính tin BÁN để không lẫn với giá thuê/tháng
+        priced = batch_df.filter(
+            (col("listing_type") == "Bán") & col("price").isNotNull() & (col("price") > 0)
+        )
+        if priced.count() > 0:
+            s = priced.selectExpr(
+                "min(price) mn", "max(price) mx", "avg(price) av"
+            ).collect()[0]
+            med = priced.approxQuantile("price", [0.5], 0.05)
+            med = med[0] if med else None
+            print("\nGiá BÁN (tỷ VND):")
+            print(f"  • Thấp nhất : {s['mn']/1e9:.2f}")
+            print(f"  • Cao nhất  : {s['mx']/1e9:.2f}")
+            print(f"  • Trung bình: {s['av']/1e9:.2f}")
+            if med:
+                print(f"  • Trung vị  : {med/1e9:.2f}")
+
+        sized = batch_df.filter(col("area_m2").isNotNull() & (col("area_m2") > 0))
+        if sized.count() > 0:
+            a = sized.selectExpr("avg(area_m2) av", "min(area_m2) mn", "max(area_m2) mx").collect()[0]
+            print(f"\nDiện tích (m²): TB {a['av']:.1f} | nhỏ nhất {a['mn']:.0f} | lớn nhất {a['mx']:.0f}")
+
+        # Ghi HDFS dạng Parquet, partition theo loại hình
+        out_df = batch_df.withColumn("processed_at", current_timestamp())
+        (out_df.write
+            .mode("append")
+            .partitionBy("property_type")
+            .parquet(config.HDFS_OUTPUT_PATH))
+        print(f"\n✅ Đã ghi {total} tin vào {config.HDFS_OUTPUT_PATH}")
+
     except Exception as e:
-        logger.error("Lỗi: %s. Kiểm tra Kafka đã chạy chưa (docker-compose up).", e)
+        print(f"❌ Lỗi xử lý batch {batch_id}: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def main():
+    spark = create_spark_session()
+    try:
+        kafka_df = (
+            spark.readStream.format("kafka")
+            .option("kafka.bootstrap.servers", config.KAFKA_BOOTSTRAP_SERVERS)
+            .option("subscribe", config.KAFKA_TOPIC)
+            .option("startingOffsets", config.KAFKA_STARTING_OFFSET)
+            .load()
+        )
+
+        parsed_df = (
+            kafka_df
+            .select(from_json(col("value").cast("string"), listing_schema).alias("d"),
+                    col("timestamp").alias("kafka_ts"))
+            .select("d.*", "kafka_ts")
+            .filter(col("list_id").isNotNull() & col("title").isNotNull())
+        )
+
+        query = (
+            parsed_df.writeStream
+            .foreachBatch(process_and_save_batch)
+            .outputMode("append")
+            .trigger(processingTime="10 seconds")
+            .start()
+        )
+        print("✅ Spark Streaming đã bắt đầu. Ctrl+C để dừng.")
+        query.awaitTermination()
+
+    except KeyboardInterrupt:
+        print("\n⏹️  Đang dừng...")
+    except Exception as e:
+        print(f"❌ Lỗi: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
     finally:
-        if producer:
-            producer.close()
-            logger.info("Đã đóng kết nối Kafka.")
+        spark.stop()
+        print("✅ Đã dừng Spark Session")
 
 
 if __name__ == "__main__":
