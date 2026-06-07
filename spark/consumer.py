@@ -7,6 +7,11 @@ from pyspark.sql.functions import col, from_json, count, avg, current_timestamp,
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType
 import config
 import os
+from sentence_transformers import SentenceTransformer
+
+model = SentenceTransformer(
+    "BAAI/bge-m3"
+)
 
 os.environ['HADOOP_HOME'] = r'C:\hadoop'  # Cần nếu chạy trên Windows và dùng winutils.exe
 
@@ -111,6 +116,7 @@ def process_and_save_batch(batch_df, batch_id):
             .parquet(config.HDFS_OUTPUT_PATH))
         print(f"\n✅ Đã ghi {total} tin vào {config.HDFS_OUTPUT_PATH}")
 
+        
     except Exception as e:
         print(f"❌ Lỗi xử lý batch {batch_id}: {e}")
         import traceback
