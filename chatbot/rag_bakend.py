@@ -13,11 +13,11 @@ from common.config import settings
 from sentence_transformers import SentenceTransformer
 
 # ── Config ────────────────────────────────────────────────────────────────────
-MODEL         = settings.MODEL          # model chính để trả lời
-EMBED_MODEL   = "text-embedding-3-small"  # hoặc đổi sang multilingual-e5 nếu cần
-COLLECTION    = settings.QDRANT_COLLECTION
+MODEL          = settings.MODEL
+EMBED_MODEL    = "text-embedding-3-small"
+COLLECTION     = settings.QDRANT_COLLECTION
 QDRANT_API_KEY = settings.QDRANT_API_KEY
-TOP_K         = 5                       # số chunk retrieve từ Qdrant
+TOP_K          = 5
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 groq_client = OpenAI(
@@ -25,54 +25,70 @@ groq_client = OpenAI(
     api_key=settings.GRSK,
 )
 
-
-# Load 1 lần khi khởi động
 embed_model = SentenceTransformer("intfloat/multilingual-e5-small")
 
-qdrant = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
+qdrant = QdrantClient(
+    url=settings.QDRANT_URL,
+    api_key=settings.QDRANT_API_KEY,
+    check_compatibility=False,
+)
 
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
-REWRITE_SYSTEM = """Bạn là trợ lý tối ưu hóa câu truy vấn cho hệ thống tìm kiếm FAQ.
+REWRITE_SYSTEM = """Bạn là chuyên gia tối ưu hóa truy vấn cho hệ thống tìm kiếm bất động sản Việt Nam.
 
-Nhiệm vụ: Dựa vào lịch sử hội thoại và câu hỏi hiện tại, hãy viết lại câu hỏi thành
-một câu truy vấn tìm kiếm ngữ nghĩa hoàn chỉnh, rõ ràng, độc lập (không cần context
-hội thoại để hiểu).
+Nhiệm vụ: Dựa vào lịch sử hội thoại và câu hỏi hiện tại, viết lại thành câu truy vấn
+tìm kiếm ngữ nghĩa hoàn chỉnh, độc lập, phù hợp với domain bất động sản.
 
 Quy tắc:
-- Giữ nguyên ngôn ngữ tiếng Việt
-- Không thêm câu trả lời hay giải thích
-- Giải quyết các đại từ mơ hồ ("cái đó", "nó", "vấn đề trên",...) thành nội dung cụ thể
-- Nếu câu hỏi đã rõ ràng và độc lập → trả về nguyên văn
-- Chỉ trả về câu truy vấn, không thêm gì khác"""
+- Giữ nguyên tiếng Việt
+- Giải quyết đại từ mơ hồ ("chỗ đó", "căn đó", "giá kia",...) thành nội dung cụ thể
+- Bổ sung từ khóa domain nếu ngữ cảnh rõ ràng:
+    + Loại BĐS: phòng trọ, căn hộ, chung cư, nhà phố, mặt bằng, đất nền, villa,...
+    + Giao dịch: cho thuê, mua bán, sang nhượng, đặt cọc,...
+    + Thông số: diện tích (m²), giá (triệu/tháng, tỷ), nội thất, tầng, hướng,...
+    + Vị trí: quận, huyện, phường, đường, khu vực,...
+- Nếu câu hỏi đã đủ rõ → trả về nguyên văn
+- Chỉ trả về câu truy vấn, không giải thích thêm"""
 
-RAG_SYSTEM = """Bạn là trợ lý hỗ trợ khách hàng chuyên nghiệp, trả lời bằng tiếng Việt.
+RAG_SYSTEM = """Bạn là PropAI — chuyên gia tư vấn bất động sản hàng đầu Việt Nam, \
+có kiến thức sâu rộng về thị trường mua bán, cho thuê, đầu tư bất động sản.
 
-Nguyên tắc trả lời:
-- Chỉ trả lời dựa trên CONTEXT được cung cấp bên dưới
-- Nếu context không đủ thông tin → thành thật nói "Tôi chưa có thông tin về vấn đề này"
-- Trả lời ngắn gọn, đúng trọng tâm, dễ hiểu
-- Không bịa thêm thông tin ngoài context
+## Phong cách tư vấn
+- Chuyên nghiệp, thân thiện, dễ hiểu — như một môi giới BĐS giàu kinh nghiệm
+- Trả lời có cấu trúc rõ ràng khi cần (dùng bullet, số liệu cụ thể)
+- Chủ động gợi ý thêm thông tin hữu ích liên quan nếu có trong context
+- Dùng đơn vị Việt Nam: triệu/tháng, tỷ đồng, m², sào, hecta,...
 
-CONTEXT:
+## Phạm vi tư vấn
+Bạn có thể tư vấn về:
+- 🏠 Thuê / Mua nhà & căn hộ — giá cả, vị trí, so sánh các lựa chọn
+- 🏪 Mặt bằng kinh doanh — diện tích, mặt tiền, khu vực phù hợp
+- 🏗️ Đầu tư BĐS — phân tích lợi nhuận, rủi ro, tiềm năng khu vực
+- 📋 Pháp lý & thủ tục — sổ đỏ, hợp đồng, thuế phí, đặt cọc
+- 📊 Thị trường — xu hướng giá, so sánh khu vực, phân khúc
+
+## Nguyên tắc trả lời
+- Ưu tiên thông tin từ CONTEXT bên dưới — đây là dữ liệu thực tế từ thị trường
+- Khi context có listing phù hợp: trình bày rõ địa chỉ, giá, diện tích, đặc điểm nổi bật
+- Khi context không đủ: thành thật nói "Hiện tôi chưa có dữ liệu phù hợp với yêu cầu này"
+  và gợi ý người dùng cung cấp thêm thông tin (khu vực, ngân sách, diện tích mong muốn)
+- Không bịa số liệu, không suy đoán giá ngoài context
+- Cuối câu trả lời, nếu phù hợp, hãy hỏi thêm 1 câu để hiểu rõ hơn nhu cầu khách hàng
+
+## CONTEXT (dữ liệu thị trường thực tế):
 {context}"""
 
 
 # ── Step 1: Query Rewriting ───────────────────────────────────────────────────
 
 def rewrite_query(query: str, chat_history: list[dict]) -> str:
-    """
-    Rewrite query dựa trên lịch sử hội thoại để tạo câu truy vấn độc lập.
-    Chỉ lấy 6 message gần nhất để tránh token bloat.
-    """
-    # Chỉ lấy lịch sử gần đây, bỏ qua system message
     recent_history = [
         m for m in chat_history[-6:]
         if m["role"] in ("user", "assistant")
     ]
 
-    # Nếu không có lịch sử → không cần rewrite
     if not recent_history:
         return query.strip()
 
@@ -90,25 +106,23 @@ Viết lại câu hỏi thành truy vấn tìm kiếm độc lập:"""
 
     response = groq_client.chat.completions.create(
         model=MODEL,
-        messages=[
+        messages=cast(list[ChatCompletionMessageParam], [
             {"role": "system", "content": REWRITE_SYSTEM},
             {"role": "user",   "content": rewrite_prompt},
-        ],
-        temperature=0,      # cần deterministic cho rewriting
+        ]),
+        temperature=0,
         max_tokens=150,
         stream=False,
     )
 
     rewritten = (response.choices[0].message.content or "").strip()
-    print(f"[Rewrite] '{query}' → '{rewritten}'")  # debug, bỏ khi production
+    print(f"[Rewrite] '{query}' → '{rewritten}'")
     return rewritten if rewritten else query.strip()
-
 
 
 # ── Step 2: Embed + Retrieve từ Qdrant ───────────────────────────────────────
 
 def embed_text(text: str) -> list[float]:
-    """Tạo vector embedding cho query."""
     return embed_model.encode(
         f"query: {text}",
         normalize_embeddings=True
@@ -116,7 +130,6 @@ def embed_text(text: str) -> list[float]:
 
 
 def retrieve_context(query_vector: list[float], top_k: int = TOP_K) -> list[str]:
-    """Truy vấn Qdrant, trả về list các đoạn text liên quan."""
     results = qdrant.query_points(
         collection_name=COLLECTION,
         query=query_vector,
@@ -126,7 +139,7 @@ def retrieve_context(query_vector: list[float], top_k: int = TOP_K) -> list[str]
 
     chunks = []
     for hit in results:
-        if hit.payload:  # guard None check
+        if hit.payload:
             text = hit.payload.get("text") or hit.payload.get("content", "")
             if text:
                 chunks.append(str(text))
@@ -137,7 +150,6 @@ def retrieve_context(query_vector: list[float], top_k: int = TOP_K) -> list[str]
 # ── Step 3: Build RAG prompt + Call LLM ──────────────────────────────────────
 
 def build_context(chunks: list[str]) -> str:
-    """Ghép các chunk thành context block có đánh số."""
     if not chunks:
         return "Không tìm thấy thông tin liên quan."
     return "\n\n---\n\n".join(
@@ -150,34 +162,22 @@ def chat_with_rag(
     chat_history: list[dict],
     model: str = MODEL,
 ) -> tuple[str, list[dict]]:
-    """
-    Main function: nhận query + history → trả về (answer, updated_history).
-
-    Args:
-        user_query:   Câu hỏi mới nhất của user
-        chat_history: Toàn bộ lịch sử dạng [{"role": "user/assistant", "content": "..."}]
-        model:        Model Groq sẽ dùng
-
-    Returns:
-        (answer, updated_history) — cập nhật history để dùng cho lượt sau
-    """
-    # 1. Rewrite query dựa trên lịch sử
+    # 1. Rewrite query
     rewritten_query = rewrite_query(user_query, chat_history)
 
-    # 2. Embed query đã rewrite
+    # 2. Embed
     query_vector = embed_text(rewritten_query)
 
-    # 3. Retrieve context từ Qdrant
+    # 3. Retrieve
     chunks = retrieve_context(query_vector)
     context = build_context(chunks)
 
-    # 4. Build system prompt với context RAG
-    system_msg = {
+    # 4. Build messages
+    system_msg: ChatCompletionMessageParam = {
         "role": "system",
         "content": RAG_SYSTEM.format(context=context),
     }
 
-    # 5. Gọi LLM với full history (để model hiểu mạch hội thoại khi trả lời)
     messages_to_send = cast(
         list[ChatCompletionMessageParam],
         [system_msg] + chat_history + [{"role": "user", "content": user_query}]
@@ -191,7 +191,6 @@ def chat_with_rag(
     )
     answer = (response.choices[0].message.content or "Xin lỗi, tôi không thể trả lời câu hỏi này vào lúc này.").strip()
 
-    # 6. Cập nhật history với cặp user-assistant mới nhất
     updated_history = chat_history + [
         {"role": "user",      "content": user_query},
         {"role": "assistant", "content": answer},
@@ -203,7 +202,7 @@ def chat_with_rag(
 # ── CLI demo ──────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("=== RAG Chatbot (gõ 'exit' để thoát) ===\n")
+    print("=== PropAI – Tư Vấn Bất Động Sản (gõ 'exit' để thoát) ===\n")
     history: list[dict] = []
 
     while True:
@@ -214,4 +213,4 @@ if __name__ == "__main__":
             continue
 
         answer, history = chat_with_rag(user_input, history)
-        print(f"Bot: {answer}\n")
+        print(f"PropAI: {answer}\n")
