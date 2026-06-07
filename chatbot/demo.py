@@ -1,5 +1,5 @@
 import streamlit as st
-from rag_bakend import llm_answer
+from rag_bakend import MODEL, chat_with_rag
 
 
 st.set_page_config(
@@ -253,6 +253,7 @@ if len(st.session_state.messages) <= 1:
     """, unsafe_allow_html=True)
 
 # Input
+# ✅ Sửa lại đoạn xử lý input trong demo.py
 if user_q := st.chat_input("Hỏi về giá nhà, khu vực, đầu tư, pháp lý…"):
 
     st.session_state.messages.append({"role": "user", "content": user_q})
@@ -268,8 +269,13 @@ if user_q := st.chat_input("Hỏi về giá nhà, khu vực, đầu tư, pháp l
         """, unsafe_allow_html=True)
 
         try:
-            prompt = "\n".join([m["content"] for m in st.session_state.messages])
-            answer = llm_answer(prompt)
+            # ✅ Unpack tuple (answer, updated_history)
+            # Chỉ truyền history không gồm message user vừa thêm
+            history_without_last = st.session_state.messages[:-1]
+            answer, _ = chat_with_rag(
+                user_query=user_q,
+                chat_history=history_without_last,
+            )
             if not answer:
                 answer = "⚠️ Không nhận được phản hồi từ model. Vui lòng thử lại."
             placeholder.markdown(answer)
