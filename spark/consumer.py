@@ -99,12 +99,28 @@ def process_and_save_batch(batch_df, batch_id):
             print(f"\nDiện tích (m²): TB {a['av']:.1f} | nhỏ nhất {a['mn']:.0f} | lớn nhất {a['mx']:.0f}")
 
         # Ghi HDFS dạng Parquet, partition theo loại hình
-        out_df = batch_df.withColumn("processed_at", current_timestamp())
+        # Ghi HDFS — CHỈ ghi tin có list_id chưa tồn tại
+        spark = batch_df.sparkSession
+        out_df = (batch_df
+                  .dropDuplicates(["list_id"])              # khử trùng trong chính batch
+                  .withColumn("processed_at", current_timestamp()))
+
+        try:
+            existing = spark.read.parquet(config.HDFS_OUTPUT_PATH).select("list_id")
+            out_df = out_df.join(existing, "list_id", "left_anti")  # bỏ tin đã có trong HDFS
+        except Exception:
+            pass  # lần chạy đầu chưa có thư mục output -> ghi tất cả
+
+        n_new = out_df.count()
+        if n_new == 0:
+            print("\n⏭️  Không có tin mới (tất cả list_id đã có trong HDFS).")
+            return
+
         (out_df.write
             .mode("append")
             .partitionBy("property_type")
             .parquet(config.HDFS_OUTPUT_PATH))
-        print(f"\n✅ Đã ghi {total} tin vào {config.HDFS_OUTPUT_PATH}")
+        print(f"\n✅ Đã ghi {n_new} tin MỚI vào {config.HDFS_OUTPUT_PATH}")
 
     except Exception as e:
         print(f"❌ Lỗi xử lý batch {batch_id}: {e}")
