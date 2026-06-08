@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 
 # File JSON thô do crawler sinh ra
 RAW_FILE = Path(__file__).parent.parent / "crawler" / "data" / "all_raw_data.json"
-
-
+SENT_FILE = Path(__file__).parent / "sent_ids.txt"   # nhớ các list_id đã gửi lên Kafka
+def load_sent_ids() -> set:
+    return set(SENT_FILE.read_text(encoding="utf-8").split()) if SENT_FILE.exists() else set()
 # ----------------------------------------------------------------------------- #
 # Helpers ép kiểu an toàn
 # ----------------------------------------------------------------------------- #
@@ -172,25 +173,32 @@ def load_raw() -> dict:
 
 
 def send_all(producer: KafkaProducer, raw_map: dict) -> int:
-    success = 0
+    sent_ids = load_sent_ids()
+    success, skipped = 0, 0
     total = len(raw_map)
     for list_id, raw in raw_map.items():
+        if str(list_id) in sent_ids:        # đã gửi rồi -> KHÔNG đẩy lại lên Kafka
+            skipped += 1
+            continue
         try:
             record = normalize_ad(list_id, raw)
-        except Exception as e:  # bản ghi lỗi thì bỏ qua, không dừng cả job
+        except Exception as e:
             logger.warning("Bỏ qua %s do lỗi normalize: %s", list_id, e)
             continue
 
         producer.send(
             kafka_config.KAFKA_TOPIC,
-            key=record["property_type"],   # key = loại hình -> phân phối đều theo nhóm
+            key=record["property_type"],
             value=record,
         )
+        sent_ids.add(str(list_id))
         success += 1
         if success % 100 == 0:
             logger.info("Đã đưa %d/%d tin vào hàng đợi...", success, total)
 
     producer.flush()
+    SENT_FILE.write_text("\n".join(sorted(sent_ids)), encoding="utf-8")   # lưu lại sau khi gửi xong
+    logger.info("Gửi mới %d tin, bỏ qua %d tin đã gửi trước đó.", success, skipped)
     return success
 
 
