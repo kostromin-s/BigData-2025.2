@@ -152,12 +152,15 @@ def create_producer() -> KafkaProducer:
         client_id=kafka_config.KAFKA_CLIENT_ID,
         value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode("utf-8"),
         key_serializer=lambda k: k.encode("utf-8") if k else None,
-        acks="all",
+        
+        enable_idempotence=True, 
+        acks=-1,
         retries=5,
+        max_in_flight_requests_per_connection=1,
+        
         linger_ms=10,
         batch_size=16384,
         compression_type="gzip",
-        max_in_flight_requests_per_connection=5,
     )
 
 
