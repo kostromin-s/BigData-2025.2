@@ -2,7 +2,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance
 
 client = QdrantClient(
-    host="qdrant",
+    host="localhost",
     port=6333
 )
 

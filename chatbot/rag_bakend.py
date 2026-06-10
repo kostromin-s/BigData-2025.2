@@ -8,7 +8,7 @@ from typing import cast
 from openai.types.chat import ChatCompletionMessageParam
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from common.config import settings
+from chatbot.common.config import settings
 
 from sentence_transformers import SentenceTransformer
 
@@ -25,7 +25,7 @@ groq_client = OpenAI(
     api_key=settings.GRSK,
 )
 
-embed_model = SentenceTransformer("intfloat/multilingual-e5-small")
+embed_model = SentenceTransformer("intfloat/multilingual-e5-base")
 
 qdrant = QdrantClient(
     url=settings.QDRANT_URL,

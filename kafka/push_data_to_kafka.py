@@ -1,37 +1,30 @@
 """
 Đẩy dữ liệu bất động sản lên Kafka.
-
-Nguồn dữ liệu: crawler/data/all_raw_data.json  (dạng { list_id: raw_ad_json } lấy từ API Chợ Tốt)
-Mỗi tin rao được CHUẨN HOÁ về một schema có cấu trúc rồi gửi lên Kafka topic real-estate-documents.
-
-Lưu ý:
-- Tên trường của API Chợ Tốt có thể thay đổi theo từng nhóm tin. Hàm normalize_ad() lấy
-  dữ liệu phòng thủ bằng .get() và quét cả ad_params/parameters. Chạy thử:
-      python push_data_to_kafka.py --inspect
-  để in ra các key của bản ghi đầu tiên và đối chiếu, nếu cần thì chỉnh map bên dưới.
+...
 """
 import sys
 import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+import os
 
-from kafka import KafkaProducer
+from kafka import KafkaProducer, KafkaConsumer, TopicPartition
 import kafka_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# File JSON thô do crawler sinh ra
 RAW_FILE = Path(__file__).parent.parent / "crawler" / "data" / "all_raw_data.json"
-SENT_FILE = Path(__file__).parent / "sent_ids.txt"   # nhớ các list_id đã gửi lên Kafka
-def load_sent_ids() -> set:
-    return set(SENT_FILE.read_text(encoding="utf-8").split()) if SENT_FILE.exists() else set()
+SENT_IDS_FILE = Path(__file__).parent / ".sent_ids.json"  # Track IDs đã gửi
+
+BATCH_SIZE = 100
+
+
 # ----------------------------------------------------------------------------- #
 # Helpers ép kiểu an toàn
 # ----------------------------------------------------------------------------- #
 def to_float(value):
-    """Ép về float, chỉ giữ chữ số ASCII và dấu thập phân. Trả None nếu không parse được."""
     if value is None:
         return None
     if isinstance(value, (int, float)):
@@ -50,19 +43,13 @@ def to_int(value):
 
 
 def build_param_lookup(raw: dict) -> dict:
-    """
-    Gộp tất cả thuộc tính có cấu trúc về 1 dict {key: value}.
-    Chợ Tốt lưu thuộc tính (rooms, toilets, legal...) ở nhiều chỗ:
-      - ad["params"]: [ {"id": "rooms", "value": "2"}, ... ]   <-- hay dùng nhất
-      - ad_params   : { "size": {"value": 50, ...}, ... }
-      - parameters  : [ {"id": "size", "value": "50 m²"}, ... ]
-    """
     lookup = {}
     ad = raw.get("ad", raw)
-    sources = [ad.get("params") if isinstance(ad, dict) else None,
-               raw.get("ad_params"),
-               raw.get("parameters")]
-
+    sources = [
+        ad.get("params") if isinstance(ad, dict) else None,
+        raw.get("ad_params"),
+        raw.get("parameters"),
+    ]
     for src in sources:
         if isinstance(src, dict):
             for key, obj in src.items():
@@ -75,20 +62,17 @@ def build_param_lookup(raw: dict) -> dict:
                     val = p.get("value")
                     if val not in (None, "", []):
                         lookup.setdefault(p["id"], val)
-
     return lookup
 
 
 # ----------------------------------------------------------------------------- #
-# Chuẩn hoá 1 tin rao -> schema thống nhất
+# Chuẩn hoá 1 tin rao
 # ----------------------------------------------------------------------------- #
 def normalize_ad(list_id, raw: dict) -> dict:
-    """Map raw JSON Chợ Tốt -> bản ghi BĐS có cấu trúc."""
-    ad = raw.get("ad", raw)          # field chính nằm trong "ad"; fallback dùng raw
+    ad = raw.get("ad", raw)
     params = build_param_lookup(raw)
 
     def pick(*keys):
-        """Lấy giá trị đầu tiên không rỗng từ ad rồi tới params."""
         for k in keys:
             v = ad.get(k)
             if v not in (None, "", []):
@@ -101,18 +85,15 @@ def normalize_ad(list_id, raw: dict) -> dict:
 
     title = (pick("subject") or "").strip()
     description = pick("body") or ""
-
-    # Bán hay cho thuê? Tin thuê luôn có "/tháng" trong chuỗi giá -> heuristic đáng tin
     price_text = pick("price_string") or ""
     listing_type = "Cho thuê" if "tháng" in price_text.lower() else "Bán"
 
-    # Thời điểm đăng (list_time thường là epoch mil‑giây)
     posted_at = ""
     lt = pick("list_time")
     if lt is not None:
         ts = to_float(lt)
         if ts is not None:
-            if ts > 1e12:        # milisecond -> second
+            if ts > 1e12:
                 ts = ts / 1000.0
             try:
                 posted_at = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
@@ -139,9 +120,29 @@ def normalize_ad(list_id, raw: dict) -> dict:
         "posted_at":     posted_at,
         "url":           f"https://www.chotot.com/{list_id}.htm",
     }
-    # Văn bản dùng cho RAG/chatbot sau này
     record["full_text"] = (title + "\n" + description).strip()
     return record
+
+
+# ----------------------------------------------------------------------------- #
+# Track sent IDs — đọc/ghi file local để dedup giữa các lần chạy
+# ----------------------------------------------------------------------------- #
+def load_sent_ids() -> set:
+    """Đọc danh sách list_id đã gửi thành công từ file local."""
+    if not SENT_IDS_FILE.exists():
+        return set()
+    try:
+        return set(json.loads(SENT_IDS_FILE.read_text(encoding="utf-8")))
+    except Exception:
+        return set()
+
+
+def save_sent_ids(sent_ids: set) -> None:
+    """Ghi lại danh sách list_id đã gửi ra file local."""
+    SENT_IDS_FILE.write_text(
+        json.dumps(list(sent_ids), ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 # ----------------------------------------------------------------------------- #
@@ -153,12 +154,15 @@ def create_producer() -> KafkaProducer:
         client_id=kafka_config.KAFKA_CLIENT_ID,
         value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode("utf-8"),
         key_serializer=lambda k: k.encode("utf-8") if k else None,
-        
-        enable_idempotence=True, 
-        acks="all",
-        retries=5,
-        max_in_flight_requests_per_connection=5,
-        
+
+        enable_idempotence=True,
+        acks=-1,
+        retries=2147483647,
+        max_in_flight_requests_per_connection=1,
+
+        transactional_id=getattr(kafka_config, "KAFKA_TRANSACTIONAL_ID", "real-estate-producer-1"),
+        transaction_timeout_ms=60000,
+
         linger_ms=10,
         batch_size=16384,
         compression_type="gzip",
@@ -167,43 +171,88 @@ def create_producer() -> KafkaProducer:
 
 def load_raw() -> dict:
     if not RAW_FILE.exists():
-        logger.error("Không tìm thấy %s. Hãy chạy crawler trước (python crawler/crawl.py).", RAW_FILE)
+        logger.error("Không tìm thấy %s. Hãy chạy crawler trước.", RAW_FILE)
         return {}
     return json.loads(RAW_FILE.read_text(encoding="utf-8"))
 
 
+# ----------------------------------------------------------------------------- #
+# Gửi data với dedup
+# ----------------------------------------------------------------------------- #
 def send_all(producer: KafkaProducer, raw_map: dict) -> int:
+    producer.init_transactions()
+
+    # Load IDs đã gửi từ lần chạy trước
     sent_ids = load_sent_ids()
-    success, skipped = 0, 0
-    total = len(raw_map)
-    for list_id, raw in raw_map.items():
-        if str(list_id) in sent_ids:        # đã gửi rồi -> KHÔNG đẩy lại lên Kafka
-            skipped += 1
-            continue
+
+    # Lọc ra chỉ những ID chưa gửi
+    new_items = [(lid, raw) for lid, raw in raw_map.items() if str(lid) not in sent_ids]
+
+    if not new_items:
+        logger.info("Tất cả %d records đã được gửi trước đó. Không có gì mới.", len(raw_map))
+        return 0
+
+    logger.info(
+        "Tổng: %d | Đã gửi trước đó: %d | Cần gửi mới: %d",
+        len(raw_map),
+        len(sent_ids),
+        len(new_items),
+    )
+
+    success = 0
+    total_new = len(new_items)
+
+    for batch_start in range(0, total_new, BATCH_SIZE):
+        batch = new_items[batch_start : batch_start + BATCH_SIZE]
+        batch_sent_ids = set()
+
         try:
-            record = normalize_ad(list_id, raw)
+            producer.begin_transaction()
+
+            for list_id, raw in batch:
+                try:
+                    record = normalize_ad(list_id, raw)
+                except Exception as e:
+                    logger.warning("Bỏ qua %s do lỗi normalize: %s", list_id, e)
+                    continue
+
+                producer.send(
+                    kafka_config.KAFKA_TOPIC,
+                    key=record["property_type"],
+                    value=record,
+                )
+                batch_sent_ids.add(str(list_id))
+
+            producer.commit_transaction()
+
+            # Chỉ lưu IDs sau khi commit thành công
+            sent_ids.update(batch_sent_ids)
+            save_sent_ids(sent_ids)
+            success += len(batch_sent_ids)
+
+            logger.info(
+                "Committed batch %d-%d (%d records) | Tổng đã gửi: %d/%d",
+                batch_start + 1,
+                batch_start + len(batch),
+                len(batch_sent_ids),
+                success,
+                total_new,
+            )
+
         except Exception as e:
-            logger.warning("Bỏ qua %s do lỗi normalize: %s", list_id, e)
-            continue
+            logger.error(
+                "Lỗi batch %d-%d, đang abort: %s",
+                batch_start + 1,
+                batch_start + len(batch),
+                e,
+            )
+            producer.abort_transaction()
+            # Không lưu sent_ids của batch này → lần sau sẽ retry
 
-        producer.send(
-            kafka_config.KAFKA_TOPIC,
-            key=record["property_type"],
-            value=record,
-        )
-        sent_ids.add(str(list_id))
-        success += 1
-        if success % 100 == 0:
-            logger.info("Đã đưa %d/%d tin vào hàng đợi...", success, total)
-
-    producer.flush()
-    SENT_FILE.write_text("\n".join(sorted(sent_ids)), encoding="utf-8")   # lưu lại sau khi gửi xong
-    logger.info("Gửi mới %d tin, bỏ qua %d tin đã gửi trước đó.", success, skipped)
     return success
 
 
 def inspect(raw_map: dict) -> None:
-    """In key của bản ghi đầu tiên + 1 bản ghi đã chuẩn hoá để kiểm tra map."""
     if not raw_map:
         return
     first_id, first_raw = next(iter(raw_map.items()))
@@ -223,6 +272,12 @@ def main() -> None:
         inspect(raw_map)
         return
 
+    # --reset: xóa file tracking để push lại toàn bộ data từ đầu
+    if "--reset" in sys.argv:
+        if SENT_IDS_FILE.exists():
+            SENT_IDS_FILE.unlink()
+            logger.info("Đã xóa file tracking. Sẽ gửi lại toàn bộ data.")
+
     logger.info("Topic: %s | Bootstrap: %s", kafka_config.KAFKA_TOPIC, kafka_config.KAFKA_BOOTSTRAP_SERVERS)
     logger.info("Tổng số tin trong file thô: %d", len(raw_map))
 
@@ -231,7 +286,7 @@ def main() -> None:
         producer = create_producer()
         logger.info("Kết nối Kafka thành công!")
         sent = send_all(producer, raw_map)
-        logger.info("Hoàn thành! Đã gửi %d tin lên Kafka.", sent)
+        logger.info("Hoàn thành! Đã gửi %d tin mới lên Kafka.", sent)
     except Exception as e:
         logger.error("Lỗi: %s. Kiểm tra Kafka đã chạy chưa (docker-compose up).", e)
     finally:

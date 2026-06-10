@@ -8,18 +8,36 @@ Thay thế phần thống kê theo "văn bản" bằng các chỉ số đặc th
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, count, avg, round as sround
 import config
+import os
+import pathlib
+import sys
 
+os.environ['JAVA_HOME']   = r'C:\Program Files\Microsoft\jdk-17.0.19.10-hotspot'
+os.environ['HADOOP_HOME'] = r'C:\hadoop'
+os.environ['PATH']        = r'C:\Program Files\Microsoft\jdk-17.0.19.10-hotspot\bin;' + os.environ.get('PATH', '')
 
-def create_spark_session():
+os.environ['PYSPARK_PYTHON']        = sys.executable
+os.environ['PYSPARK_DRIVER_PYTHON'] = sys.executable
+
+def create_spark_session() -> SparkSession:
     spark = (
         SparkSession.builder
         .appName(config.SPARK_APP_NAME)
         .master(config.SPARK_MASTER)
-        .config("spark.hadoop.fs.defaultFS", config.HDFS_NAMENODE)
+        .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.13:4.1.0")
         .config("spark.sql.adaptive.enabled", "true")
+        # Tắt log noise trên Windows
+        .config("spark.executor.heartbeatInterval", "60s")
+        .config("spark.network.timeout", "300s")
         .getOrCreate()
     )
-    spark.sparkContext.setLogLevel("WARN")
+    spark.sparkContext.setLogLevel("ERROR")  # Chỉ hiện ERROR thật sự, bỏ WARN/INFO
+    
+    # Tắt thêm logger cụ thể gây noise
+    log4j = spark._jvm.org.apache.log4j
+    log4j.Logger.getLogger("org.apache.spark.storage.BlockManagerMasterEndpoint").setLevel(log4j.Level.OFF)
+    log4j.Logger.getLogger("org.apache.spark.executor.Executor").setLevel(log4j.Level.OFF)
+    
     return spark
 
 

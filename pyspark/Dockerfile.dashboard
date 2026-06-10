@@ -9,7 +9,10 @@ RUN python3 -m pip install --no-cache-dir \
     plotly==5.18.0 \
     pandas==2.1.4 \
     matplotlib==3.8.2 \
-    seaborn==0.13.0
+    seaborn==0.13.0 \
+    pyarrow \
+    fsspec \
+    requests
 
 WORKDIR /app
 

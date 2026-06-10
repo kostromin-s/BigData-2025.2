@@ -1,19 +1,27 @@
 import os
+os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
 import re
 from pathlib import Path
+import pandas as pd
+
+
 
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 
 from qdrant_client import QdrantClient
 from langchain_qdrant import QdrantVectorStore
 from common.config import settings
 
 
+
+
 # ================= CONFIG =================
-DATA_DIR: str = "./data/real_estate"
+DATA_DIR: str = "../spark/output"
 QDRANT_URL: str = settings.QDRANT_URL
 COLLECTION: str = "real_estate"
 EMBED_MODEL: str = settings.EMBED_MODEL
@@ -61,36 +69,56 @@ def extract_metadata(text: str) -> dict:
 
 def load_docs():
     """
-    Load và parse document.
-
-    Version 2:
-    - Có metadata
-    - Chuẩn bị dữ liệu tốt hơn cho RAG
+    Load dữ liệu từ các file Parquet phân vùng của Spark
+    và chuyển đổi thành đối tượng Document của LangChain phục vụ RAG.
     """
-
     docs = []
     root = Path(DATA_DIR)
+    
+    # Quét toàn bộ các file đuôi .parquet nằm rải rác trong các thư mục phân vùng
+    files = list(root.rglob("*.parquet"))
+    
+    if not files:
+        print(f"Không tìm thấy file .parquet nào trong thư mục {DATA_DIR}!")
+        return []
 
-    for file_path in root.rglob("*.*"):
+    print(f"Tìm thấy {len(files)} file dữ liệu Parquet phân vùng.")
+
+    for file_path in files:
         try:
-            text = file_path.read_text(encoding="utf-8", errors="ignore")
+            # Dùng pandas đọc file nhị phân Parquet lên thành DataFrame
+            df = pd.read_parquet(file_path)
+            
+            # Duyệt qua từng dòng (bài tin) trong Dataframe
+            for _, row in df.iterrows():
+                # Gộp tiêu đề và nội dung chi tiết thành một chuỗi text hoàn chỉnh để mô hình AI dễ hiểu ngữ nghĩa
+                # Thay các tên cột ("title", "description") cho đúng với schema file Parquet của bạn
+                title = row.get("title", "")
+                content = row.get("description", row.get("content", ""))
+                full_text = f"Tiêu đề: {title}\nNội dung chi tiết: {content}"
+                
+                # Trích xuất metadata từ các cột có sẵn của Spark thay vì dùng Regex cào lại từ text
+                location = str(row.get("district", row.get("location", "Khác")))
+                price = row.get("price", None)
+                area = row.get("area_m2", row.get("area", None))
+                
+                # Ép kiểu dữ liệu chuẩn để Qdrant không bị lỗi
+                price_val = float(price) if pd.notna(price) else None
+                area_val = int(area) if pd.notna(area) else None
 
-            meta = extract_metadata(text)
-
-            doc = Document(
-                page_content=text,
-                metadata={
-                    "source": file_path.name,
-                    "location": meta["location"],
-                    "price": meta["price"],
-                    "area": meta["area"],
-                }
-            )
-
-            docs.append(doc)
-
+                doc = Document(
+                    page_content=full_text,
+                    metadata={
+                        "source": file_path.name,
+                        "location": location,
+                        "price": price_val,
+                        "area": area_val,
+                    }
+                )
+                docs.append(doc)
+                
         except Exception as e:
-            print("Lỗi:", file_path, e)
+            print("Lỗi khi parse file Parquet:", file_path, e)
 
     return docs
 
@@ -148,8 +176,13 @@ def build_index():
         return
     
     emb = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
+    
+    ACTUAL_QDRANT_URL = "http://localhost:6333"
 
-    client = QdrantClient(url=QDRANT_URL)
+    client = QdrantClient(
+        url=ACTUAL_QDRANT_URL,
+        api_key=settings.QDRANT_API_KEY
+    )
 
     # Reset collection
     try:
@@ -160,8 +193,10 @@ def build_index():
     QdrantVectorStore.from_documents(
         documents=chunks,
         embedding=emb,
-        url=QDRANT_URL,
+        url=ACTUAL_QDRANT_URL,
+        api_key=settings.QDRANT_API_KEY,
         collection_name=COLLECTION,
+        batch_size=10,
     )
 
     print("Build index thành công")

@@ -2,7 +2,8 @@
 Cấu hình Kafka
 """
 
-KAFKA_BOOTSTRAP_SERVERS = "localhost:29092"
+KAFKA_BOOTSTRAP_SERVERS = "localhost:29092" # chạy bên trong nội bộ Docker
 KAFKA_TOPIC = "real-estate-documents"
 KAFKA_CLIENT_ID = "real-estate-documents-producer"
+KAFKA_TRANSACTIONAL_ID = "real-estate-producer-1" # Kích hoạt tính năng Exactly-Once Semantic
 

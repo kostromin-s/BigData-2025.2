@@ -2,9 +2,12 @@
 Cấu hình cho Spark Consumer
 """
 import os
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).parent
 
 # Kafka Configuration
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "real-estate-documents")
 KAFKA_STARTING_OFFSET = os.getenv("KAFKA_STARTING_OFFSET", "earliest")
 
@@ -12,7 +15,7 @@ KAFKA_STARTING_OFFSET = os.getenv("KAFKA_STARTING_OFFSET", "earliest")
 SPARK_APP_NAME = "RealEstateDocumentsConsumer"
 SPARK_MASTER = os.getenv("SPARK_MASTER", "local[*]")
 
-# HDFS Configuration
-HDFS_NAMENODE = os.getenv("HDFS_NAMENODE", "hdfs://namenode:9000")
-HDFS_OUTPUT_PATH = os.getenv("HDFS_OUTPUT_PATH", "/data/real-estate")
-HDFS_CHECKPOINT_PATH = os.getenv("HDFS_CHECKPOINT_PATH", "/tmp/spark-checkpoint")
+# Output — lưu thẳng vào thư mục project
+HDFS_NAMENODE    = os.getenv("HDFS_NAMENODE", "")
+HDFS_OUTPUT_PATH = os.getenv("HDFS_OUTPUT_PATH",     str(PROJECT_ROOT / "output" / "real-estate"))
+HDFS_CHECKPOINT_PATH = os.getenv("HDFS_CHECKPOINT_PATH", str(PROJECT_ROOT / "output" / "checkpoint"))

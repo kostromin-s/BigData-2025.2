@@ -1,7 +1,7 @@
 
 import os
 from typing import List
-from common.config import settings
+from chatbot.common.config import settings
 from qdrant_client import QdrantClient
 from langchain_qdrant import QdrantVectorStore
 # Prefer the new langchain-huggingface package; fall back for compatibility
