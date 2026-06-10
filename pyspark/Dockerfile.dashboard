@@ -2,19 +2,18 @@ FROM apache/spark-py:latest
 
 USER root
 
-# Install required Python packages
+# Base image apache/spark-py KHONG co numpy/pandas/pyarrow -> phai cai day du.
+# Dung mirror Aliyun (nhanh & on dinh o chau A) thay cho PyPI default (Fastly)
+# vi duong toi files.pythonhosted.org bi cham va lam hong file tai ve.
 RUN python3 -m pip install --no-cache-dir \
-    pyspark==3.5.0 \
+    --index-url https://mirrors.aliyun.com/pypi/simple/ \
+    --trusted-host mirrors.aliyun.com \
+    --retries 10 --timeout 120 \
     streamlit==1.29.0 \
-    plotly==5.18.0 \
-    pandas==2.1.4 \
-    matplotlib==3.8.2 \
-    seaborn==0.13.0
+    plotly==5.18.0
 
 WORKDIR /app
 
-# Expose Streamlit port
 EXPOSE 8501
 
-# Run Streamlit
 CMD ["streamlit", "run", "dashboard.py", "--server.port=8501", "--server.address=0.0.0.0"]

@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: datanode
+  namespace: bigdata
+spec:
+  serviceName: datanode-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: datanode
+  template:
+    metadata:
+      labels:
+        app: datanode
+    spec:
+      containers:
+        - name: datanode
+          image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+          ports:
+            - containerPort: 9864
+              name: web-ui
+            - containerPort: 9866
+              name: ipc
+          env:
+            - name: CORE_CONF_fs_defaultFS
+              value: "hdfs://namenode:9000"
+            - name: HDFS_CONF_dfs_replication
+              value: "1"
+            - name: HDFS_CONF_dfs_datanode_use_datanode_hostname
+              value: "true"
+            - name: HDFS_CONF_dfs_client_use_datanode_hostname
+              value: "true"
+          volumeMounts:
+            - name: datanode-data
+              mountPath: /hadoop/dfs/data
+  volumeClaimTemplates:
+    - metadata:
+        name: datanode-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+---
+# Headless service — DataNode dùng hostname datanode-0.datanode-headless để đăng ký với NameNode
+apiVersion: v1
+kind: Service
+metadata:
+  name: datanode-headless
+  namespace: bigdata
+spec:
+  clusterIP: None
+  selector:
+    app: datanode
+  ports:
+    - name: web-ui
+      port: 9864
+    - name: ipc
+      port: 9866

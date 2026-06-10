@@ -1,0 +1,23 @@
+FROM apache/spark-py:latest
+
+USER root
+
+# Cài thêm thư viện Python cần thiết
+# Chỉ cài dependencies thực sự cần — không dùng requirements.txt gốc
+COPY spark/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# Copy source code vào image (context là project root)
+COPY spark/consumer.py /opt/spark/apps/consumer.py
+COPY spark/config.py /opt/spark/apps/config.py
+
+WORKDIR /opt/spark/apps
+
+# Spark submit với Kafka connector
+CMD ["/opt/spark/bin/spark-submit", \
+     "--packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1", \
+     "--master", "local[*]", \
+     "--conf", "spark.sql.adaptive.enabled=true", \
+     "--conf", "spark.sql.adaptive.coalescePartitions.enabled=true", \
+     "--conf", "spark.ui.port=4040", \
+     "/opt/spark/apps/consumer.py"]
