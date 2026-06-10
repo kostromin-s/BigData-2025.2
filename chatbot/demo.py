@@ -116,17 +116,44 @@ code {
 }
 
 /* ===== INPUT ===== */
+/* Khối nổi chứa ô chat ở dưới -> nền tối, BỎ hộp trắng mặc định */
+[data-testid="stChatFloatingInputContainer"],
+[data-testid="stBottom"],
+[data-testid="stBottom"] > div {
+    background: #0f1115 !important;
+}
 [data-testid="stChatInput"] {
-    background: rgba(30,34,45,0.9) !important;
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 12px;
+    background: rgba(30,34,45,0.95) !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    border-radius: 12px !important;
+}
+[data-testid="stChatInput"]:focus-within {
+    border-color: #60a5fa !important;
+    box-shadow: 0 0 0 1px rgba(96,165,250,0.35) !important;
 }
 [data-testid="stChatInput"] textarea {
-    color: #11151A !important;
+    color: #e6e8eb !important;                 /* chữ SÁNG cho dễ đọc trên nền tối */
+    -webkit-text-fill-color: #e6e8eb !important;
+    background: transparent !important;
 }
+[data-testid="stChatInput"] textarea::placeholder { color: #64748b !important; }
 [data-testid="stChatInput"] button {
     background: #3b82f6 !important;
     color: white !important;
+}
+
+/* ===== BUTTON (Xoá lịch sử chat) ===== */
+.stButton > button {
+    background: rgba(40,45,60,0.8) !important;
+    color: #cbd5e1 !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 10px !important;
+    transition: all .2s !important;
+}
+.stButton > button:hover {
+    background: rgba(59,130,246,0.2) !important;
+    border-color: #60a5fa !important;
+    color: #ffffff !important;
 }
 
 /* ===== STATUS ===== */
@@ -149,6 +176,44 @@ code {
     margin-right:4px;
     animation:pulse 1.2s infinite;
 }
+
+/* ===== SIDEBAR: tagline / divider / cards / stats ===== */
+.sidebar-tagline {
+    text-align:center; font-size:0.68rem; letter-spacing:2px;
+    text-transform:uppercase; color:#64748b !important; margin-bottom:0.6rem;
+}
+.sidebar-divider {
+    border:none; border-top:1px solid rgba(255,255,255,0.08); margin:1rem 0;
+}
+.sidebar-card {
+    display:block; background:rgba(40,45,60,0.6);
+    border:1px solid rgba(255,255,255,0.06); border-radius:12px;
+    padding:0.65rem 0.85rem; margin-bottom:0.55rem; transition:all .2s;
+}
+.sidebar-card:hover {
+    background:rgba(59,130,246,0.15); border-color:rgba(96,165,250,0.4);
+}
+.sidebar-card-icon { font-size:1.1rem; margin-right:6px; }
+.sidebar-card-label { font-weight:600; color:#e2e8f0 !important; }
+.sidebar-card-desc { font-size:0.72rem; color:#94a3b8 !important; margin-top:2px; }
+.sidebar-stats { display:flex; justify-content:space-between; gap:6px; text-align:center; }
+.stat-item { flex:1; }
+.stat-num { font-size:1.2rem; font-weight:700; color:#60a5fa !important; }
+.stat-label { font-size:0.62rem; color:#94a3b8 !important; text-transform:uppercase; }
+
+/* ===== MAIN: header / status dot / quick prompts ===== */
+.page-header { margin-bottom:0.3rem; }
+.status-dot {
+    display:inline-block; width:7px; height:7px; border-radius:50%;
+    background:#22c55e; margin-right:5px; box-shadow:0 0 6px #22c55e;
+}
+.quick-prompts { display:flex; flex-wrap:wrap; gap:8px; margin:1rem 0; }
+.quick-chip {
+    background:rgba(40,45,60,0.8); border:1px solid rgba(255,255,255,0.08);
+    border-radius:20px; padding:6px 14px; font-size:0.8rem;
+    color:#cbd5e1 !important; cursor:pointer; transition:all .2s;
+}
+.quick-chip:hover { background:rgba(59,130,246,0.2); border-color:#60a5fa; }
 </style>
 """, unsafe_allow_html=True)
 

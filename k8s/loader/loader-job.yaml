@@ -21,8 +21,8 @@ spec:
             - "until nc -z kafka 9092; do echo waiting for kafka; sleep 3; done"
       containers:
         - name: loader
-          image: kafka-loader:v2
-          imagePullPolicy: Never        # dùng image đã load vào Minikube
+          image: kafka-loader:latest
+          imagePullPolicy: Never        # build thẳng trong Minikube (minikube image build) nên luôn fresh
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka:9092"
