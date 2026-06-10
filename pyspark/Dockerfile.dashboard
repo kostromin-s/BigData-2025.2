@@ -11,6 +11,11 @@ RUN python3 -m pip install --no-cache-dir \
     --retries 10 --timeout 120 \
     streamlit==1.29.0 \
     plotly==5.18.0
+# (streamlit kéo theo pandas/numpy/pyarrow nên không cần cài riêng)
+
+# pyspark CÓ SẴN trong base (/opt/spark/python) nhưng không nằm trên PYTHONPATH khi
+# chạy 'streamlit run' (chỉ spark-submit mới tự set). Set thủ công -> khỏi tải pyspark 316MB.
+ENV PYTHONPATH=/opt/spark/python:/opt/spark/python/lib/pyspark.zip:/opt/spark/python/lib/py4j-0.10.9.7-src.zip
 
 WORKDIR /app
 

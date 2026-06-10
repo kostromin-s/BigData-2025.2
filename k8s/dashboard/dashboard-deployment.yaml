@@ -25,7 +25,7 @@ spec:
               done
       containers:
         - name: dashboard
-          image: streamlit-dashboard:latest
+          image: streamlit-dashboard:v2
           # Dùng image local từ Minikube — không pull từ Docker Hub
           imagePullPolicy: Never
           ports:

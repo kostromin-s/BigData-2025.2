@@ -120,13 +120,15 @@ Write-Host "  Doi Kafka san sang..."
 # ── Bước 5: ConfigMap + Qdrant + Spark + Dashboard ───────────────────────────
 Write-Host "`n[5/6] Deploy Qdrant, Spark Consumer, Dashboard..." -ForegroundColor Yellow
 
-# ConfigMap phải tạo TRƯỚC khi dashboard deployment khởi động
+# ConfigMap phải tạo TRƯỚC khi dashboard deployment khởi động.
+# KHÔNG dùng "... -o yaml | kubectl apply -f -": pipe của PowerShell re-encode luồng
+# UTF-8 làm HỎNG tiếng Việt thành "?". Tạo trực tiếp (--from-file đọc bytes nguyên vẹn).
 Write-Host "  Tao ConfigMap dashboard-source..."
+& kubectl delete configmap dashboard-source -n bigdata --ignore-not-found
 & kubectl create configmap dashboard-source `
     --from-file=dashboard.py=pyspark/dashboard.py `
     --from-file=config.py=pyspark/config.py `
-    -n bigdata `
-    --dry-run=client -o yaml | kubectl apply -f -
+    -n bigdata
 
 & kubectl apply -f k8s/qdrant/
 & kubectl apply -f k8s/spark/
