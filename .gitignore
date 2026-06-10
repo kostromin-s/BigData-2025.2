@@ -75,5 +75,5 @@ logs/
 
 API.json
 chatbot/data
-
+chatbot/common/config.py
 common/config.py
