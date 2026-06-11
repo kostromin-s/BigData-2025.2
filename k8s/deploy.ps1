@@ -1,8 +1,11 @@
-# deploy.ps1 — Script deploy toàn bộ BigData-2025.2 lên Minikube
+﻿# deploy.ps1 — Script deploy toàn bộ BigData-2025.2 lên Minikube
 # Chạy từ thư mục gốc: .\k8s\deploy.ps1
 
 param(
-    [switch]$Reset  # Dùng -Reset để xóa và deploy lại từ đầu
+    [switch]$Reset,                # Xóa namespace + deploy lại từ đầu
+    [string]$GroqKey = $env:GRSK,  # Key Groq cho chatbot; rỗng -> bỏ qua chatbot
+    [switch]$SkipChatbot,          # Bỏ qua phần chatbot
+    [switch]$SkipData              # Bỏ qua crawl + đẩy dữ liệu vào dashboard
 )
 
 $ROOT = Split-Path -Parent $PSScriptRoot
@@ -134,16 +137,77 @@ Write-Host "  Tao ConfigMap dashboard-source..."
 & kubectl apply -f k8s/spark/
 & kubectl apply -f k8s/dashboard/
 
+# ── Bước 6: Tạo topic Kafka (để spark-consumer không CrashLoop khi chưa có data) ─
+Write-Host "`n[6] Tao topic 'real-estate-documents'..." -ForegroundColor Yellow
+$topicOk = $false
+for ($i = 0; $i -lt 12 -and -not $topicOk; $i++) {
+    & kubectl exec kafka-0 -n bigdata -- kafka-topics --bootstrap-server localhost:9092 --create --topic real-estate-documents --partitions 1 --replication-factor 1 --if-not-exists 2>$null
+    if ($LASTEXITCODE -eq 0) { $topicOk = $true } else { Start-Sleep -Seconds 5 }
+}
+if ($topicOk) {
+    Write-Host "  Topic OK" -ForegroundColor Green
+} else {
+    Write-Host "  [WARN] Chua tao duoc topic — tao tay sau khi kafka-0 san sang." -ForegroundColor Yellow
+}
+
+# ── Bước 7: Crawl + đẩy dữ liệu vào dashboard ────────────────────────────────
+if (-not $SkipData) {
+    Write-Host "`n[7] Crawl + day du lieu vao Kafka..." -ForegroundColor Yellow
+    if (-not (Test-Path "crawler/data/all_raw_data.json")) {
+        Write-Host "  Chua co data -> chay crawler (can internet toi Cho Tot)..." -ForegroundColor Gray
+        & python crawler/crawl.py
+    } else {
+        Write-Host "  Da co crawler/data/all_raw_data.json -> bo qua crawl." -ForegroundColor Gray
+    }
+    Write-Host "  Build image kafka-loader trong Minikube..." -ForegroundColor Gray
+    & minikube image build -t kafka-loader:latest -f kafka/Dockerfile.loader .
+    if ($LASTEXITCODE -eq 0) {
+        & kubectl delete job kafka-loader -n bigdata --ignore-not-found
+        & kubectl apply -f k8s/loader/loader-job.yaml
+        Write-Host "  Da chay Job day data. Xem: kubectl logs -f job/kafka-loader -n bigdata" -ForegroundColor Green
+    } else {
+        Write-Host "  [WARN] Build kafka-loader that bai -> bo qua day data." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "`n[7] Bo qua data (-SkipData)." -ForegroundColor Gray
+}
+
+# ── Bước 8: Chatbot RAG (cần Groq key) ───────────────────────────────────────
+$chatbotDeployed = $false
+if ($SkipChatbot) {
+    Write-Host "`n[8] Bo qua chatbot (-SkipChatbot)." -ForegroundColor Gray
+} elseif ([string]::IsNullOrWhiteSpace($GroqKey)) {
+    Write-Host "`n[8] Bo qua chatbot: CHUA co Groq key." -ForegroundColor Yellow
+    Write-Host "    Lay key free tai https://console.groq.com roi chay lai:" -ForegroundColor Yellow
+    Write-Host "    .\k8s\deploy.ps1 -GroqKey gsk_xxx" -ForegroundColor Yellow
+} else {
+    Write-Host "`n[8] Trien khai chatbot (lan dau build LAU ~vai phut do tai torch)..." -ForegroundColor Yellow
+    & minikube image build -t chatbot:latest -f chatbot/Dockerfile .
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  [WARN] Build chatbot that bai -> bo qua." -ForegroundColor Yellow
+    } else {
+        & kubectl delete secret chatbot-secret -n bigdata --ignore-not-found
+        & kubectl create secret generic chatbot-secret --from-literal=GRSK=$GroqKey -n bigdata
+        & kubectl apply -f k8s/chatbot/index-job.yaml
+        & kubectl apply -f k8s/chatbot/chatbot-deployment.yaml
+        $chatbotDeployed = $true
+        Write-Host "  Chatbot da trien khai (index Job + deployment)." -ForegroundColor Green
+    }
+}
+
 # ── Hiển thị kết quả ──────────────────────────────────────────────────────────
 Write-Host "`n=== Trang thai cac Pod ===" -ForegroundColor Cyan
 & kubectl get pods -n bigdata
 
-Write-Host "`n=== URL truy cap (dung sau khi pod Ready) ===" -ForegroundColor Cyan
+Write-Host "`n=== URL truy cap (dung 'minikube service <ten> -n bigdata' tren Windows) ===" -ForegroundColor Cyan
 $IP = & minikube ip
-Write-Host "  HDFS NameNode UI   : http://${IP}:30870"
-Write-Host "  Kafka AKHQ UI      : http://${IP}:30080"
-Write-Host "  Spark UI           : http://${IP}:30404"
-Write-Host "  Streamlit Dashboard: http://${IP}:30501"
-Write-Host "  Qdrant API         : http://${IP}:30333"
+Write-Host "  HDFS NameNode UI   : http://${IP}:30870  (minikube service namenode-ui)"
+Write-Host "  Kafka AKHQ UI      : http://${IP}:30080  (minikube service akhq)"
+Write-Host "  Spark UI           : http://${IP}:30404  (minikube service spark-consumer-ui)"
+Write-Host "  Streamlit Dashboard: http://${IP}:30501  (minikube service streamlit-dashboard)"
+Write-Host "  Qdrant API         : http://${IP}:30333  (minikube service qdrant)"
+if ($chatbotDeployed) {
+    Write-Host "  Chatbot (PropAI)   : http://${IP}:30502  (minikube service chatbot)" -ForegroundColor Green
+}
 
 Write-Host "`n[Done] Deployment hoan tat!" -ForegroundColor Green
