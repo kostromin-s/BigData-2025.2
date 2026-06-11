@@ -1,5 +1,5 @@
 import streamlit as st
-from rag_bakend import MODEL, chat_with_rag
+from chatbot.rag_backend import MODEL, chat_with_rag
 
 
 st.set_page_config(

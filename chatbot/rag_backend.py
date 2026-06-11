@@ -1,128 +1,216 @@
-
+import sys
 import os
-from typing import List
-from common.config import settings
+from typing import Optional
+from openai import OpenAI
 from qdrant_client import QdrantClient
-from langchain_qdrant import QdrantVectorStore
-# Prefer the new langchain-huggingface package; fall back for compatibility
-try:
-    from langchain_huggingface import HuggingFaceEmbeddings  # type: ignore
-    _EMB_DEPRECATION_MSG = None
-except Exception:
-    from langchain_community.embeddings import HuggingFaceEmbeddings  # type: ignore
-    _EMB_DEPRECATION_MSG = (
-        "Using deprecated HuggingFaceEmbeddings from langchain_community. "
-        "Install and switch to 'langchain-huggingface' for future compatibility."
-    )
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.prompts import PromptTemplate
+from qdrant_client.models import SearchRequest
+from typing import cast
+from openai.types.chat import ChatCompletionMessageParam
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from common.config import settings
 
-# ================== CONFIG ==================
-QDRANT_URL   = settings.QDRANT_URL
-COLLECTION   = settings.COLLECTION_NAME
-EMBED_MODEL  = settings.EMBED_MODEL
-GENAI_MODEL  = settings.EMBED_MODEL  # Reuse same model for LLM; adjust if you want a different one
-# ============================================
+from sentence_transformers import SentenceTransformer
 
+# ── Config ────────────────────────────────────────────────────────────────────
+MODEL          = settings.MODEL
+EMBED_MODEL    = "text-embedding-3-small"
+COLLECTION     = settings.QDRANT_COLLECTION
+QDRANT_API_KEY = settings.QDRANT_API_KEY
+TOP_K          = 5
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
-QA_PROMPT = PromptTemplate.from_template(
-    """
-Bạn là trợ lý pháp lý, chỉ được phép trả lời dựa trên NGỮ CẢNH dưới đây.
+groq_client = OpenAI(
+    base_url="https://api.groq.com/openai/v1",
+    api_key=settings.GRSK,
+)
 
-Nếu không tìm thấy thông tin, hãy nói: 
-"Không có dữ liệu để kết luận trong kho văn bản hiện tại."
+embed_model = SentenceTransformer("intfloat/multilingual-e5-small")
 
-Câu hỏi:
-{question}
-
---- NGỮ CẢNH ---
-{context} 
-----------------
-
-Trả lời ngắn gọn, trích dẫn rõ điều khoản nếu có:
-"""
+qdrant = QdrantClient(
+    url=settings.QDRANT_URL,
+    api_key=settings.QDRANT_API_KEY,
+    check_compatibility=False,
 )
 
 
-# 1️⃣ LLM
-def _get_llm() -> ChatGoogleGenerativeAI:
-    # Read API key from environment variables (do not hardcode secrets)
-    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-    
-    if not api_key:
-        raise RuntimeError(
-            "⚠️ Thiếu API key. Set GOOGLE_API_KEY hoặc GEMINI_API_KEY trong môi trường."
-        )
+# ── Prompts ───────────────────────────────────────────────────────────────────
 
-    # ChatGoogleGenerativeAI reads the key from env, but pass explicitly for clarity
-    llm = ChatGoogleGenerativeAI(
-        model=GENAI_MODEL,
-        temperature=0.2,
-        max_output_tokens=1024,
-        google_api_key=api_key,
-    )
-    return llm
+REWRITE_SYSTEM = """Bạn là chuyên gia tối ưu hóa truy vấn cho hệ thống tìm kiếm bất động sản Việt Nam.
+
+Nhiệm vụ: Dựa vào lịch sử hội thoại và câu hỏi hiện tại, viết lại thành câu truy vấn
+tìm kiếm ngữ nghĩa hoàn chỉnh, độc lập, phù hợp với domain bất động sản.
+
+Quy tắc:
+- Giữ nguyên tiếng Việt
+- Giải quyết đại từ mơ hồ ("chỗ đó", "căn đó", "giá kia",...) thành nội dung cụ thể
+- Bổ sung từ khóa domain nếu ngữ cảnh rõ ràng:
+    + Loại BĐS: phòng trọ, căn hộ, chung cư, nhà phố, mặt bằng, đất nền, villa,...
+    + Giao dịch: cho thuê, mua bán, sang nhượng, đặt cọc,...
+    + Thông số: diện tích (m²), giá (triệu/tháng, tỷ), nội thất, tầng, hướng,...
+    + Vị trí: quận, huyện, phường, đường, khu vực,...
+- Nếu câu hỏi đã đủ rõ → trả về nguyên văn
+- Chỉ trả về câu truy vấn, không giải thích thêm"""
+
+RAG_SYSTEM = """Bạn là PropAI — chuyên gia tư vấn bất động sản hàng đầu Việt Nam, \
+có kiến thức sâu rộng về thị trường mua bán, cho thuê, đầu tư bất động sản.
+
+## Phong cách tư vấn
+- Chuyên nghiệp, thân thiện, dễ hiểu — như một môi giới BĐS giàu kinh nghiệm
+- Trả lời có cấu trúc rõ ràng khi cần (dùng bullet, số liệu cụ thể)
+- Chủ động gợi ý thêm thông tin hữu ích liên quan nếu có trong context
+- Dùng đơn vị Việt Nam: triệu/tháng, tỷ đồng, m², sào, hecta,...
+
+## Phạm vi tư vấn
+Bạn có thể tư vấn về:
+- 🏠 Thuê / Mua nhà & căn hộ — giá cả, vị trí, so sánh các lựa chọn
+- 🏪 Mặt bằng kinh doanh — diện tích, mặt tiền, khu vực phù hợp
+- 🏗️ Đầu tư BĐS — phân tích lợi nhuận, rủi ro, tiềm năng khu vực
+- 📋 Pháp lý & thủ tục — sổ đỏ, hợp đồng, thuế phí, đặt cọc
+- 📊 Thị trường — xu hướng giá, so sánh khu vực, phân khúc
+
+## Nguyên tắc trả lời
+- Ưu tiên thông tin từ CONTEXT bên dưới — đây là dữ liệu thực tế từ thị trường
+- Khi context có listing phù hợp: trình bày rõ địa chỉ, giá, diện tích, đặc điểm nổi bật
+- Khi context không đủ: thành thật nói "Hiện tôi chưa có dữ liệu phù hợp với yêu cầu này"
+  và gợi ý người dùng cung cấp thêm thông tin (khu vực, ngân sách, diện tích mong muốn)
+- Không bịa số liệu, không suy đoán giá ngoài context
+- Cuối câu trả lời, nếu phù hợp, hãy hỏi thêm 1 câu để hiểu rõ hơn nhu cầu khách hàng
+
+## CONTEXT (dữ liệu thị trường thực tế):
+{context}"""
 
 
-# 2️⃣ Global store
-_VECTOR_STORE = None
+# ── Step 1: Query Rewriting ───────────────────────────────────────────────────
 
+def rewrite_query(query: str, chat_history: list[dict]) -> str:
+    recent_history = [
+        m for m in chat_history[-6:]
+        if m["role"] in ("user", "assistant")
+    ]
 
-# 3️⃣ Load vector store TỪ client — KHÔNG xài from_existing_collection()
-def get_vector_store() -> QdrantVectorStore:
-    global _VECTOR_STORE
+    if not recent_history:
+        return query.strip()
 
-    if _VECTOR_STORE is None:
-        # Notify once if running on deprecated embeddings
-        if _EMB_DEPRECATION_MSG:
-            print(_EMB_DEPRECATION_MSG)
-
-        emb = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
-
-        client = QdrantClient(url=QDRANT_URL)
-
-        _VECTOR_STORE = QdrantVectorStore(
-            client=client,
-            collection_name=COLLECTION,
-            embedding=emb,
-        )
-
-    return _VECTOR_STORE
-
-
-# 4️⃣ RAG main
-def rag_answer(question: str, k: int = 5):
-
-    store = get_vector_store()
-    llm = _get_llm()
-
-    docs = store.similarity_search(question, k=k)
-    if not docs:
-        return "Không tìm thấy thông tin trong cơ sở dữ liệu."
-
-    context_list = []
-    for i, d in enumerate(docs, start=1):
-        src = d.metadata.get("source", "unknown")
-        code = d.metadata.get("main_code", "")
-        dt = d.metadata.get("issue_date", "")
-        context_list.append(
-            f"[Đoạn {i} — {src} — {code} — {dt}]\n{d.page_content}"
-        )
-
-    context = "\n\n".join(context_list)
-
-    prompt = QA_PROMPT.format(
-        question=question,
-        context=context,
+    history_text = "\n".join(
+        f"{'Người dùng' if m['role'] == 'user' else 'Trợ lý'}: {m['content']}"
+        for m in recent_history
     )
 
-    out = llm.invoke(prompt)
-    return out.content
+    rewrite_prompt = f"""Lịch sử hội thoại:
+{history_text}
+
+Câu hỏi hiện tại: {query}
+
+Viết lại câu hỏi thành truy vấn tìm kiếm độc lập:"""
+
+    response = groq_client.chat.completions.create(
+        model=MODEL,
+        messages=cast(list[ChatCompletionMessageParam], [
+            {"role": "system", "content": REWRITE_SYSTEM},
+            {"role": "user",   "content": rewrite_prompt},
+        ]),
+        temperature=0,
+        max_tokens=150,
+        stream=False,
+    )
+
+    rewritten = (response.choices[0].message.content or "").strip()
+    print(f"[Rewrite] '{query}' → '{rewritten}'")
+    return rewritten if rewritten else query.strip()
 
 
-# 5️⃣ Free mode
-def llm_answer(question: str):
-    llm = _get_llm()
-    out = llm.invoke(question)
-    return out.content
+# ── Step 2: Embed + Retrieve từ Qdrant ───────────────────────────────────────
+
+def embed_text(text: str) -> list[float]:
+    return embed_model.encode(
+        f"query: {text}",
+        normalize_embeddings=True
+    ).tolist()
+
+
+def retrieve_context(query_vector: list[float], top_k: int = TOP_K) -> list[str]:
+    results = qdrant.query_points(
+        collection_name=COLLECTION,
+        query=query_vector,
+        limit=top_k,
+        with_payload=True,
+    ).points
+
+    chunks = []
+    for hit in results:
+        if hit.payload:
+            text = hit.payload.get("text") or hit.payload.get("content", "")
+            if text:
+                chunks.append(str(text))
+
+    return chunks
+
+
+# ── Step 3: Build RAG prompt + Call LLM ──────────────────────────────────────
+
+def build_context(chunks: list[str]) -> str:
+    if not chunks:
+        return "Không tìm thấy thông tin liên quan."
+    return "\n\n---\n\n".join(
+        f"[{i+1}] {chunk}" for i, chunk in enumerate(chunks)
+    )
+
+
+def chat_with_rag(
+    user_query: str,
+    chat_history: list[dict],
+    model: str = MODEL,
+) -> tuple[str, list[dict]]:
+    # 1. Rewrite query
+    rewritten_query = rewrite_query(user_query, chat_history)
+
+    # 2. Embed
+    query_vector = embed_text(rewritten_query)
+
+    # 3. Retrieve
+    chunks = retrieve_context(query_vector)
+    context = build_context(chunks)
+
+    # 4. Build messages
+    system_msg: ChatCompletionMessageParam = {
+        "role": "system",
+        "content": RAG_SYSTEM.format(context=context),
+    }
+
+    messages_to_send = cast(
+        list[ChatCompletionMessageParam],
+        [system_msg] + chat_history + [{"role": "user", "content": user_query}]
+    )
+
+    response = groq_client.chat.completions.create(
+        model=model,
+        messages=messages_to_send,
+        temperature=0.3,
+        stream=False,
+    )
+    answer = (response.choices[0].message.content or "Xin lỗi, tôi không thể trả lời câu hỏi này vào lúc này.").strip()
+
+    updated_history = chat_history + [
+        {"role": "user",      "content": user_query},
+        {"role": "assistant", "content": answer},
+    ]
+
+    return answer, updated_history
+
+
+# ── CLI demo ──────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    print("=== PropAI – Tư Vấn Bất Động Sản (gõ 'exit' để thoát) ===\n")
+    history: list[dict] = []
+
+    while True:
+        user_input = input("Bạn: ").strip()
+        if user_input.lower() in ("exit", "quit", "thoát"):
+            break
+        if not user_input:
+            continue
+
+        answer, history = chat_with_rag(user_input, history)
+        print(f"PropAI: {answer}\n")
