@@ -21,7 +21,7 @@ RAW_FILE = DATA_DIR / "all_raw_data.json"
 REGION_V2 = 12000   # Hà Nội
 CATEGORY = 1000     # Bất động sản
 PAGE_START = 0
-PAGE_END = 3        
+PAGE_END = 15       # 15 trang x 20 = ~300 tin (tăng tính thuyết phục cho thống kê)
 LIMIT = 20
 SLEEP_LIST = 1.5
 SLEEP_DETAIL = 0.8

@@ -1,0 +1,11 @@
+# Bật dark theme gốc của Streamlit -> các container mặc định (gồm khung chat input
+# ở dưới) tự dùng nền tối, hết mảng trắng. CSS custom trong demo.py lo phần trang trí.
+[theme]
+base = "dark"
+primaryColor = "#60a5fa"
+backgroundColor = "#0f1115"
+secondaryBackgroundColor = "#14161c"
+textColor = "#e6e8eb"
+
+[server]
+headless = true

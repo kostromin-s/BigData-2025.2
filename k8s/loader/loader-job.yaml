@@ -1,0 +1,30 @@
+# Job đẩy dữ liệu BĐS vào Kafka (chạy trong cluster để tới được kafka:9092).
+# Chạy lại: kubectl delete job kafka-loader -n bigdata; kubectl apply -f k8s/loader/loader-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-loader
+  namespace: bigdata
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600   # tự dọn sau khi xong 10 phút
+  template:
+    spec:
+      restartPolicy: OnFailure
+      # Đợi Kafka sẵn sàng trước khi đẩy
+      initContainers:
+        - name: wait-for-kafka
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - "until nc -z kafka 9092; do echo waiting for kafka; sleep 3; done"
+      containers:
+        - name: loader
+          image: kafka-loader:latest
+          imagePullPolicy: Never        # build thẳng trong Minikube (minikube image build) nên luôn fresh
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:9092"
+            - name: KAFKA_TOPIC
+              value: "real-estate-documents"

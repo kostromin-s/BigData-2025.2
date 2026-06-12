@@ -7,13 +7,6 @@ from pyspark.sql.functions import col, from_json, count, avg, current_timestamp,
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType
 import config
 import os
-from sentence_transformers import SentenceTransformer
-
-model = SentenceTransformer(
-    "BAAI/bge-m3"
-)
-
-os.environ['HADOOP_HOME'] = r'C:\hadoop'  # Cần nếu chạy trên Windows và dùng winutils.exe
 
 # Schema bản ghi BĐS (phải trùng key với push_data_to_kafka.normalize_ad)
 listing_schema = StructType([

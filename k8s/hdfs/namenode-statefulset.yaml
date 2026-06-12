@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: namenode
+  namespace: bigdata
+spec:
+  serviceName: namenode-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: namenode
+  template:
+    metadata:
+      labels:
+        app: namenode
+    spec:
+      containers:
+        - name: namenode
+          image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+          ports:
+            - containerPort: 9870
+              name: web-ui
+            - containerPort: 9000
+              name: rpc
+          env:
+            - name: CLUSTER_NAME
+              value: "real-estate-cluster"
+            - name: CORE_CONF_fs_defaultFS
+              value: "hdfs://namenode:9000"
+            - name: CORE_CONF_hadoop_http_staticuser_user
+              value: "root"
+            - name: HDFS_CONF_dfs_replication
+              value: "1"
+            - name: HDFS_CONF_dfs_webhdfs_enabled
+              value: "true"
+            - name: HDFS_CONF_dfs_permissions_enabled
+              value: "false"
+            - name: HDFS_CONF_dfs_datanode_use_datanode_hostname
+              value: "true"
+            - name: HDFS_CONF_dfs_client_use_datanode_hostname
+              value: "true"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 9870
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 5
+          volumeMounts:
+            - name: namenode-data
+              mountPath: /hadoop/dfs/name
+  volumeClaimTemplates:
+    - metadata:
+        name: namenode-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

@@ -2,19 +2,23 @@ FROM apache/spark-py:latest
 
 USER root
 
-# Install required Python packages
+# Base image apache/spark-py KHONG co numpy/pandas/pyarrow -> phai cai day du.
+# Dung mirror Aliyun (nhanh & on dinh o chau A) thay cho PyPI default (Fastly)
+# vi duong toi files.pythonhosted.org bi cham va lam hong file tai ve.
 RUN python3 -m pip install --no-cache-dir \
-    pyspark==3.5.0 \
+    --index-url https://mirrors.aliyun.com/pypi/simple/ \
+    --trusted-host mirrors.aliyun.com \
+    --retries 10 --timeout 120 \
     streamlit==1.29.0 \
-    plotly==5.18.0 \
-    pandas==2.1.4 \
-    matplotlib==3.8.2 \
-    seaborn==0.13.0
+    plotly==5.18.0
+# (streamlit kéo theo pandas/numpy/pyarrow nên không cần cài riêng)
+
+# pyspark CÓ SẴN trong base (/opt/spark/python) nhưng không nằm trên PYTHONPATH khi
+# chạy 'streamlit run' (chỉ spark-submit mới tự set). Set thủ công -> khỏi tải pyspark 316MB.
+ENV PYTHONPATH=/opt/spark/python:/opt/spark/python/lib/pyspark.zip:/opt/spark/python/lib/py4j-0.10.9.7-src.zip
 
 WORKDIR /app
 
-# Expose Streamlit port
 EXPOSE 8501
 
-# Run Streamlit
 CMD ["streamlit", "run", "dashboard.py", "--server.port=8501", "--server.address=0.0.0.0"]

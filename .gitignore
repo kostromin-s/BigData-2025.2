@@ -77,3 +77,6 @@ API.json
 chatbot/data
 
 common/config.py
+
+CLAUDE.md
+

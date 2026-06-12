@@ -1,0 +1,17 @@
+# Image chạy push_data_to_kafka.py NHƯ MỘT JOB trong cluster.
+# Cần chạy trong cluster vì Kafka chỉ expose nội bộ (kafka:9092).
+# LƯU Ý: build context là project root; phải có crawler/data/all_raw_data.json
+#        (chạy `python crawler/crawl.py` trước khi build).
+FROM python:3.10-slim
+
+RUN pip install --no-cache-dir \
+    --index-url https://mirrors.aliyun.com/pypi/simple/ \
+    --trusted-host mirrors.aliyun.com \
+    kafka-python==2.3.1
+
+WORKDIR /app
+COPY kafka/push_data_to_kafka.py kafka/kafka_config.py /app/kafka/
+COPY crawler/data/all_raw_data.json /app/crawler/data/all_raw_data.json
+
+WORKDIR /app/kafka
+CMD ["python", "push_data_to_kafka.py"]
