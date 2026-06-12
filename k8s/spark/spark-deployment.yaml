@@ -33,6 +33,24 @@ spec:
               until nc -z namenode 9000; do
                 echo "Waiting for HDFS NameNode..."; sleep 5;
               done
+        # Đợi HDFS thoát safe mode (sau minikube start NameNode vào safe mode read-only
+        # vài phút) -> tránh spark ghi checkpoint bị chặn rồi CrashLoop.
+        - name: wait-for-hdfs-safemode
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until wget -qO- http://namenode:9870/ >/dev/null 2>&1; do
+                echo "wait NameNode http"; sleep 5;
+              done
+              for i in $(seq 1 60); do
+                if wget -qO- "http://namenode:9870/jmx?qry=Hadoop:service=NameNode,name=NameNodeInfo" 2>/dev/null | grep -q "Safe mode is ON"; then
+                  echo "HDFS dang safe mode ($i) - cho..."; sleep 5;
+                else
+                  echo "HDFS safemode OFF -> chay spark"; break;
+                fi
+              done
       containers:
         - name: spark-consumer
           image: spark-consumer:latest
